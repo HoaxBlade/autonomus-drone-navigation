@@ -40,12 +40,12 @@ def main():
         print(f" - Path Memory: Loaded {path_emb.shape[1]} keyframes for the current route.")
         print(f" - Goal Target: Destination features successfully encoded.")
         
-        # 6. Plan action
-        result = planner.plan(obs_emb, path_emb, goal_emb)
+        # 6. Plan action with geometric awareness
+        result = planner.plan(obs_emb, path_emb, goal_emb, depth_map=depth_map)
         
-        print("\nNavigation Decision:")
+        print("\nNavigation Decision (v2.1):")
         action = result.get("action")
-        velocity = result.get("velocity")[0]
+        velocity = result.get("velocity")[0] if isinstance(result.get("velocity"), list) else result.get("velocity")
         
         if action == "MOVE":
             print(f" - Action: Following the visual path.")
