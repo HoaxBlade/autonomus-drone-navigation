@@ -13,12 +13,12 @@ class TartanAirDataset(Dataset):
         self.transform = transform
         self.seq_length = seq_length
         
-        # Load image paths
-        self.img_dir = os.path.join(data_dir, "image_left")
+        # Load image paths for Shibuya structure
+        self.img_dir = os.path.join(data_dir, "image_0")
         self.img_files = sorted([f for f in os.listdir(self.img_dir) if f.endswith('.png')])
         
-        # Load poses
-        pose_file = os.path.join(data_dir, "pose_left.txt")
+        # Load poses (gt_pose.txt for Shibuya)
+        pose_file = os.path.join(data_dir, "gt_pose.txt")
         self.poses = np.loadtxt(pose_file)
 
     def __len__(self):

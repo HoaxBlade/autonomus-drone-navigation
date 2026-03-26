@@ -48,13 +48,14 @@ class NetVLAD(nn.Module):
 
         x_flatten = x.view(N, C, -1)
         
-        # Calculate residuals to each cluster centroid
-        vlad = torch.zeros([N, self.num_clusters, C], dtype=x.dtype, layout=x.layout, device=x.device)
-        for C_idx in range(self.num_clusters): # Vectorized version below is better but this is readable
-            residual = x_flatten.unsqueeze(0).permute(1, 0, 2, 3) - \
-                    self.centroids[C_idx:C_idx+1, :].expand(x_flatten.size(-1), -1, -1).permute(1, 2, 0).unsqueeze(0)
-            residual *= soft_assign[:,C_idx:C_idx+1,:].unsqueeze(2)
-            vlad[:,C_idx,:] = residual.sum(-1)
+        # Vectorized residual calculation: (N, K, C, L)
+        # x_flatten: (N, C, L), centroids: (K, C)
+        # residual[n, k, c, l] = x_flatten[n, c, l] - centroids[k, c]
+        residual = x_flatten.unsqueeze(1) - self.centroids.view(1, self.num_clusters, C, 1)
+        
+        # Apply soft assignment weights and sum over spatial dimensions (L)
+        # soft_assign.unsqueeze(2): (N, K, 1, L)
+        vlad = torch.sum(residual * soft_assign.unsqueeze(2), dim=-1) # (N, K, C)
 
         vlad = F.normalize(vlad, p=2, dim=2)  # Intra-normalization
         vlad = vlad.view(x.size(0), -1)       # Flatten

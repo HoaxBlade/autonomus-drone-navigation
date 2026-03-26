@@ -6,7 +6,7 @@ from torchvision import transforms
 from drone_nav.perception.encoders import VisualEncoder, GoalEncoder
 from drone_nav.nav.path_follower import PathFollower
 from drone_nav.nav.goal_matcher import GoalMatcher
-from .data_loaders import TartanAirDataset
+from train.data_loaders import TartanAirDataset
 
 class NavigationTrainer:
     def __init__(self, data_dir, lr=1e-4, batch_size=8, seq_length=10):
@@ -83,8 +83,8 @@ class NavigationTrainer:
         return running_loss / len(self.dataloader)
 
 if __name__ == "__main__":
-    # Placeholder for actual data dir
-    trainer = NavigationTrainer(data_dir="data/tartanair/abandon_village/P001")
+    # Updated path for extracted Shibuya subset
+    trainer = NavigationTrainer(data_dir="data/tartanair_shibuya/TartanAir_shibuya/RoadCrossing03")
     for epoch in range(1, 11):
         avg_loss = trainer.train_epoch(epoch)
         print(f"Epoch {epoch} Average Loss: {avg_loss:.4f}")
