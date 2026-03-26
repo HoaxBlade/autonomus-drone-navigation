@@ -2,18 +2,30 @@ import os
 import sys
 from train.trainer import NavigationTrainer
 
-def run_experiment():
+if __name__ == "__main__":
     print("STARTING HETEROGENEOUS EXPERIMENT RUNNER")
     print("--------------------------------------------------")
 
-    # 1. Configuration for Lightweight Training (8GB RAM Optimization)
-    # To re-enable TartanAir, simply add: {'type': 'tartanair', 'path': 'data/tartanair_shibuya/...'}
-    datasets_config = [
-        {'type': 'tum', 'path': 'data/tum_indoor'},
-        {'type': 'euroc', 'path': 'data/euroc_mav'}
-    ]
+    # 1. Dataset Configuration with Automatic Fallback
+    datasets_config = []
+    
+    # Check for lightweight real-world data
+    if os.path.exists('data/tum_indoor'):
+        datasets_config.append({'type': 'tum', 'path': 'data/tum_indoor'})
+    if os.path.exists('data/euroc_mav'):
+        datasets_config.append({'type': 'euroc', 'path': 'data/euroc_mav'})
+        
+    # Mandatory Fallback to local TartanAir if others missing
+    if not datasets_config:
+        print("[INFO] Lightweight datasets missing. Falling back to local TartanAir.")
+        shibuya_path = "data/tartanair_shibuya/TartanAir_shibuya/RoadCrossing03"
+        if os.path.exists(shibuya_path):
+            datasets_config.append({'type': 'tartanair', 'path': shibuya_path})
+        else:
+            print("[ERROR] No datasets found in 'data/' directory. Please add data.")
+            sys.exit(1)
 
-    print("[STEP 1/2] Launching Multi-Task Training...")
+    print(f"[STEP 1/2] Launching Multi-Task Training on {len(datasets_config)} dataset(s)...")
     try:
         trainer = NavigationTrainer(datasets_config=datasets_config, lr=1e-4, batch_size=2)
         
@@ -23,7 +35,7 @@ def run_experiment():
             
     except Exception as e:
         print(f"[ERROR] Training failed: {e}")
-        return
+        sys.exit(1)
 
     print("\n[STEP 2/2] Launching Simulation Framework...")
     # NOTE: In Phase 7, the sim_runner.py is used for closed-loop testing.
@@ -31,6 +43,3 @@ def run_experiment():
     print("Pre-training steps finished. System ready for closed-loop evaluation.")
     print("--------------------------------------------------")
     print("Check 'checkpoints/' for saved weights and 'plots/' for visualizations.")
-
-if __name__ == "__main__":
-    run_experiment()

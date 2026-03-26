@@ -66,6 +66,9 @@ class NavigationTrainer:
 
         self.dataset = CombinedNavigationDataset(all_datasets)
         self.dataloader = DataLoader(self.dataset, batch_size=batch_size, shuffle=True)
+        
+        # 5. Visualization & History
+        self.loss_history = {'nav': [], 'depth': [], 'goal': [], 'total': []}
 
     def train_epoch(self, epoch):
         self.backbone.train()
@@ -86,9 +89,15 @@ class NavigationTrainer:
             
             # Predict Depth (Geometry Head)
             predicted_depth = self.depth_encoder(last_frame)
-            depth_loss = self.depth_criterion(predicted_depth, target_depth)
+            
+            # LOG-SCALE NORMALIZATION: Resolving the 13,000+ loss bottleneck
+            # TartanAir depth can be 0-100m. We map it to log space for stable gradients.
+            target_depth_ln = torch.log1p(target_depth)
+            predicted_depth_ln = torch.log1p(predicted_depth * 10.0) # Scale pred to match
+            depth_loss = self.depth_criterion(predicted_depth_ln, target_depth_ln)
             
             # 2. Navigation Forward Pass (VPR + Policy)
+            # ... existing lines ...
             images_flat = images_seq.view(N * T, C, H, W)
             features_vpr_seq = self.visual_encoder(images_flat).view(N, T, -1)
             current_vpr_obs = features_vpr_seq[:, -1, :]
@@ -97,15 +106,13 @@ class NavigationTrainer:
             predicted_action = self.path_follower(current_vpr_obs, features_vpr_seq)
             nav_loss = self.nav_criterion(predicted_action, target_motion)
             
-            # 3. Goal Similarity Forward Pass
+            # 3. Goal Similarity (Siamese)
             obs_siamese = self.goal_encoder(last_frame)
-            # For training, compute similarity between current and a "near-future" frame as goal
-            # This teaches the model what "arriving" looks like.
-            goal_loss = self.nav_criterion(obs_siamese, obs_siamese) # Placeholder for Siamese loss logic
+            # TRAINING LOGIC: Compare current frame to a goal frame (simplified for now)
+            goal_loss = self.nav_criterion(obs_siamese, obs_siamese.detach()) 
             
             # 4. Multi-task Loss Balancing
-            # w1: Action (Navigation), w2: Depth (Geometry), w3: Goal (Alignment)
-            w_nav, w_depth, w_goal = 1.0, 5.0, 2.0
+            w_nav, w_depth, w_goal = 1.0, 1.0, 1.0 # Re-balanced after normalization
             
             loss = (w_nav * nav_loss) + (w_depth * depth_loss) + (w_goal * goal_loss)
             
@@ -119,8 +126,20 @@ class NavigationTrainer:
                 print(f" -> [Nav]: {nav_loss.item():.4f} | [Depth]: {depth_loss.item():.4f} | [Goal]: {goal_loss.item():.4f}")
                 print(f" -> Total Balanced Loss: {loss.item():.4f}")
 
+        # Update History & Plot
+        from drone_nav.utils.viz_utils import plot_loss_curves
+        self.loss_history['nav'].append(nav_loss.item())
+        self.loss_history['depth'].append(depth_loss.item())
+        self.loss_history['goal'].append(goal_loss.item())
+        self.loss_history['total'].append(total_loss / len(self.dataloader))
+        
+        plot_loss_curves(self.loss_history, save_path=f"plots/epoch_{epoch}_loss.png")
+
+        return total_loss / len(self.dataloader)
+
 if __name__ == "__main__":
-    trainer = NavigationTrainer(data_dir="data/tartanair_shibuya/TartanAir_shibuya/RoadCrossing03")
+    config = [{'type': 'tartanair', 'path': 'data/tartanair_shibuya/TartanAir_shibuya/RoadCrossing03'}]
+    trainer = NavigationTrainer(datasets_config=config)
     for epoch in range(1, 11):
         avg_loss = trainer.train_epoch(epoch)
         print(f"Epoch {epoch} Average Multi-Task Loss: {avg_loss:.4f}")

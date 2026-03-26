@@ -153,6 +153,8 @@ cython_debug/
 
 # Project Specific
 data/
+plots/
+checkpoints/
 *.zip
 *.tar.gz
 *.pth
