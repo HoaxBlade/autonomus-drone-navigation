@@ -107,3 +107,16 @@ if __name__ == "__main__":
     for epoch in range(1, 11):
         avg_loss = trainer.train_epoch(epoch)
         print(f"Epoch {epoch} Average Multi-Task Loss: {avg_loss:.4f}")
+    
+    # Save final model state
+    os.makedirs("checkpoints", exist_ok=True)
+    save_path = "checkpoints/nav_stack_v2_2.pth"
+    torch.save({
+        'backbone': trainer.backbone.state_dict(),
+        'visual_encoder': trainer.visual_encoder.state_dict(),
+        'goal_encoder': trainer.goal_encoder.state_dict(),
+        'depth_encoder': trainer.depth_encoder.state_dict(),
+        'path_follower': trainer.path_follower.state_dict(),
+        'goal_matcher': trainer.goal_matcher.state_dict(),
+    }, save_path)
+    print(f"Final model saved to: {save_path}")

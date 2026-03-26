@@ -10,7 +10,7 @@ from torchvision import transforms
 
 from drone_nav.utils.device import get_device
 
-def evaluate_system(data_dir):
+def evaluate_system(data_dir, weights_path=None):
     print(f"--- STARTING FORMAL EVALUATION (v2.2) ---")
     print(f"Target Sequence: {data_dir.split('/')[-1]}")
     
@@ -23,6 +23,17 @@ def evaluate_system(data_dir):
     depth_encoder = DepthEncoder(backbone).to(device)
     path_follower = PathFollower(input_dim=visual_encoder.output_dim).to(device)
     goal_matcher = GoalMatcher(input_dim=backbone.out_channels).to(device)
+    
+    # Load weights if provided
+    if weights_path and os.path.exists(weights_path):
+        print(f"Loading trained weights from: {weights_path}")
+        checkpoint = torch.load(weights_path, map_location=device, weights_only=True)
+        backbone.load_state_dict(checkpoint['backbone'])
+        visual_encoder.load_state_dict(checkpoint['visual_encoder'])
+        goal_encoder.load_state_dict(checkpoint['goal_encoder'])
+        depth_encoder.load_state_dict(checkpoint['depth_encoder'])
+        path_follower.load_state_dict(checkpoint['path_follower'])
+        goal_matcher.load_state_dict(checkpoint['goal_matcher'])
     
     planner = IntegratedPlanner(path_follower, goal_matcher)
     
@@ -90,7 +101,8 @@ def evaluate_system(data_dir):
 
 if __name__ == "__main__":
     test_path = "data/tartanair_shibuya/TartanAir_shibuya/RoadCrossing03"
+    checkpoint_path = "checkpoints/nav_stack_v2_2.pth"
     if os.path.exists(test_path):
-        evaluate_system(test_path)
+        evaluate_system(test_path, weights_path=checkpoint_path if os.path.exists(checkpoint_path) else None)
     else:
         print(f"Test data not found at {test_path}")
