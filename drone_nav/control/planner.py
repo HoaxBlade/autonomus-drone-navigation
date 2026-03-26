@@ -1,6 +1,6 @@
 import torch
-from .path_follower import PathFollower
-from .goal_matcher import GoalMatcher
+from drone_nav.nav.path_follower import PathFollower
+from drone_nav.nav.goal_matcher import GoalMatcher
 
 class IntegratedPlanner:
     """

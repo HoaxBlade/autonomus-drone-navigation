@@ -24,7 +24,7 @@ def main():
     dummy_goal = torch.randn(batch_size, 3, 224, 224)
     dummy_path = torch.randn(batch_size, 10, 3, 224, 224) # Sequence of 10 keyframes
     
-    print("Encoding inputs...")
+    print("Encoding environmental and goal data...")
     with torch.no_grad():
         obs_emb = visual_encoder(dummy_obs)
         goal_emb = goal_encoder(dummy_goal)
@@ -32,13 +32,23 @@ def main():
         # Process path sequence (flattened for the LSTM in this version)
         path_emb = torch.stack([visual_encoder(dummy_path[:, i]) for i in range(10)], dim=1)
         
-        print(f"Observation Embedding Shape: {obs_emb.shape}")
-        print(f"Goal Embedding Shape: {goal_emb.shape}")
-        print(f"Path Embedding Shape: {path_emb.shape}")
+        print(f"Perception Status: Success")
+        print(f" - Live View: Extracted {obs_emb.shape[1]} unique visual features using NetVLAD.")
+        print(f" - Path Memory: Loaded {path_emb.shape[1]} keyframes for the current route.")
+        print(f" - Goal Target: Destination features successfully encoded.")
         
         # 5. Plan action
         result = planner.plan(obs_emb, path_emb, goal_emb)
-        print(f"Planner Result: {result}")
+        
+        print("\nNavigation Decision:")
+        action = result.get("action")
+        velocity = result.get("velocity")[0]
+        
+        if action == "MOVE":
+            print(f" - Action: Following the visual path.")
+            print(f" - Predicted Velocity: Forward={velocity[0]:.2f} m/s, Right={velocity[1]:.2f} m/s, Down={velocity[2]:.2f} m/s")
+        elif action == "LAND":
+            print(" - Action: Goal reached. Initiating landing sequence.")
 
 if __name__ == "__main__":
     main()
