@@ -47,7 +47,7 @@ def main():
         # 6. Plan action with geometric awareness and dual embeddings
         result = planner.plan(obs_siamese, path_vpr, goal_siamese, depth_map=depth_map, vpr_obs=obs_vpr)
         
-        print("\nNavigation Decision (v2.1):")
+        print("\nNavigation Decision:")
         action = result.get("action")
         velocity = result.get("velocity")[0] if isinstance(result.get("velocity"), list) else result.get("velocity")
         
