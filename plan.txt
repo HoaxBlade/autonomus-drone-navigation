@@ -1,0 +1,36 @@
+### DRONE NAVIGATION UPGRADE ROADMAP (V2.0 - Industry Grade)
+
+---
+CURRECT STATE (Phase 2): "The Perception Engine"
+- Visual backbone: ResNet-18 (Features extracted but blind to depth)
+- Place recognition: NetVLAD ( viewpoint-invariant)
+- Path memory: LSTM (Sequential tracking)
+- Destination: Siamese (Similarity-based matching)
+- Result: 7.5/10 (Research Prototype)
+
+---
+NEXT STEPS: "Building a Spatial Intelligence"
+
+1. UNIFIED RESNET BACKBONE
+   - Consolidate all perception modules into one shared ResNet-50 encoder.
+   - Benefit: Massive efficiency and consistent feature understanding across all tasks.
+
+2. ADD MONOCULAR DEPTH (The "Geometry" Layer)
+   - Integrate MiDaS or Depth-Anything to provide a real-time depth map.
+   - Purpose: Obstacle avoidance and distance understanding.
+
+3. ADD LOCALIZATION BACKBONE (SLAM)
+   - Incorporate ORB-SLAM3 or VIO (Visual-Inertial Odometry).
+   - Purpose: Tracking precise (X, Y, Z) coordinates to eliminate drift on long paths.
+
+4. ADD TRAJECTORY PLANNING
+   - Move from "Predicted Velocity" to "Smooth Trajectory Generation."
+   - Purpose: Ensuring collision-free paths using cost maps.
+
+5. SAFETY OVERRIDE LAYER
+   - Implement confidence thresholds (If Confidence < 80%, then EMERGENCY HOVER).
+   - Purpose: Deployment-grade safety.
+
+---
+GOAL: 9.5/10 (Industry-Grade Deployment)
+- Move beyond "similarity" to "absolute 3D spatial awareness."
