@@ -1,0 +1,7 @@
+opencv-python
+numpy
+mavsdk
+torch
+torchvision
+matplotlib
+Pillow
