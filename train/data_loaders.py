@@ -36,12 +36,28 @@ class TartanAirDataset(Dataset):
         
         images = torch.stack(images)
         
-        # 2. Target Pose (Expert action)
-        # We want to predict the relative motion to the NEXT frame
+        # 2. Load Depth for the current frame (last in sequence)
+        depth_dir = os.path.join(self.data_dir, "depth_0")
+        img_name = self.img_files[idx + self.seq_length - 1]
+        depth_name = img_name.replace('.png', '_left_depth.npy') # TartanAir usually uses .npy for depth
+        # If .npy doesn't exist, check for .png depth
+        depth_path = os.path.join(depth_dir, depth_name)
+        if not os.path.exists(depth_path):
+            depth_path = os.path.join(depth_dir, img_name) # Shibuya might have .png depth
+            
+        if depth_path.endswith('.npy'):
+            depth = np.load(depth_path)
+        else:
+            depth = np.array(Image.open(depth_path))
+            
+        # Normalize and transform depth
+        depth = torch.from_numpy(depth).float().unsqueeze(0)
+        # Resize to match RGB
+        depth = torch.nn.functional.interpolate(depth.unsqueeze(0), size=(224, 224), mode='bilinear', align_corners=True).squeeze(0)
+
+        # 3. Target Pose (Expert action)
         curr_pose = self.poses[idx + self.seq_length - 1]
         next_pose = self.poses[idx + self.seq_length]
-        
-        # Relative movement (dx, dy, dz)
         delta_pos = next_pose[:3] - curr_pose[:3]
         
-        return images, torch.FloatTensor(delta_pos)
+        return images, torch.FloatTensor(delta_pos), depth
