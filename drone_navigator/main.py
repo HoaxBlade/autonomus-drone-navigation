@@ -1,10 +1,12 @@
 from drone_nav.perception.encoders import PerceptionBackbone, VisualEncoder, GoalEncoder, DepthEncoder
 
 def main():
-    print("Initializing Industry-Grade Drone Navigation System (v2.0)...")
+    from drone_nav.utils.device import get_device
+    device = get_device()
+    print(f"Initializing Drone Navigator v2.1 on {device}...")
     
     # 1. Initialize Unified Backbone
-    backbone = PerceptionBackbone(architecture='resnet18')
+    backbone = PerceptionBackbone(architecture='resnet18').to(device)
     
     # 2. Initialize Specialized Heads
     visual_encoder = VisualEncoder(backbone, use_netvlad=True)

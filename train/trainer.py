@@ -11,14 +11,10 @@ from train.data_loaders import TartanAirDataset
 class NavigationTrainer:
     def __init__(self, data_dir, lr=1e-4, batch_size=8, seq_length=10):
         # Set device
-        if torch.backends.mps.is_available():
-            self.device = torch.device("mps")
-        elif torch.cuda.is_available():
-            self.device = torch.device("cuda")
-        else:
-            self.device = torch.device("cpu")
-            
-        print(f"Using device: {self.device}")
+        # Universal Device Logic (CUDA/MPS/CPU)
+        from drone_nav.utils.device import get_device
+        self.device = get_device()
+        print(f"Trainer Initialized on: {self.device}")
 
         # 1. Unified Backbone
         self.backbone = PerceptionBackbone(architecture='resnet18').to(self.device)
