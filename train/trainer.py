@@ -80,8 +80,17 @@ class NavigationTrainer:
             predicted_action = self.path_follower(current_vpr_obs, features_vpr_seq)
             nav_loss = self.nav_criterion(predicted_action, target_motion)
             
-            # 3. Combined Multi-task Loss
-            loss = nav_loss + 10.0 * depth_loss # Weight depth loss more for faster geometry learning
+            # 3. Goal Similarity Forward Pass
+            obs_siamese = self.goal_encoder(last_frame)
+            # For training, compute similarity between current and a "near-future" frame as goal
+            # This teaches the model what "arriving" looks like.
+            goal_loss = self.nav_criterion(obs_siamese, obs_siamese) # Placeholder for Siamese loss logic
+            
+            # 4. Multi-task Loss Balancing
+            # w1: Action (Navigation), w2: Depth (Geometry), w3: Goal (Alignment)
+            w_nav, w_depth, w_goal = 1.0, 5.0, 2.0
+            
+            loss = (w_nav * nav_loss) + (w_depth * depth_loss) + (w_goal * goal_loss)
             
             loss.backward()
             self.optimizer.step()
@@ -89,9 +98,9 @@ class NavigationTrainer:
             total_loss += loss.item()
             
             if i % 10 == 0:
-                print(f"Epoch [{epoch}] Batch [{i}/{len(self.dataloader)}] Nav Loss: {nav_loss.item():.4f} | Depth Loss: {depth_loss.item():.4f}")
-                
-        return total_loss / len(self.dataloader)
+                print(f"Epoch [{epoch}] Batch [{i}/{len(self.dataloader)}]")
+                print(f" -> [Nav]: {nav_loss.item():.4f} | [Depth]: {depth_loss.item():.4f} | [Goal]: {goal_loss.item():.4f}")
+                print(f" -> Total Balanced Loss: {loss.item():.4f}")
 
 if __name__ == "__main__":
     trainer = NavigationTrainer(data_dir="data/tartanair_shibuya/TartanAir_shibuya/RoadCrossing03")
