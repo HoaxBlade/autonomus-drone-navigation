@@ -1,44 +1,44 @@
-import asyncio
-from drone_navigator.perception import PerceptionModule
-from drone_navigator.planner import PathPlanner
-from drone_navigator.controller import DroneController
+import torch
+from drone_nav.perception.encoders import VisualEncoder, GoalEncoder
+from drone_nav.nav.path_follower import PathFollower
+from drone_nav.nav.goal_matcher import GoalMatcher
+from drone_nav.control.planner import IntegratedPlanner
 
-async def main():
-    print("Starting Autonomous Drone Navigator...")
+def main():
+    print("Initializing Advanced Drone Navigation System (ML)...")
     
-    # Initialize modules
-    perception = PerceptionModule()
-    planner = PathPlanner()
-    controller = DroneController()
-
-    # Target Goal (Image path)
-    goal_image_path = "target_goal.jpg"
+    # 1. Initialize Encoders
+    visual_encoder = VisualEncoder(architecture='resnet18', use_netvlad=True)
+    goal_encoder = GoalEncoder(visual_encoder)
     
-    # Main loop
-    while True:
-        # 1. Get current drone state (from controller)
-        current_state = await controller.get_state()
+    # 2. Initialize Navigation Policies
+    path_follower = PathFollower(input_dim=visual_encoder.output_dim)
+    goal_matcher = GoalMatcher(input_dim=visual_encoder.output_dim)
+    
+    # 3. Initialize Fusion Planner
+    planner = IntegratedPlanner(path_follower, goal_matcher)
+    
+    # 4. Mock Inputs (Testing structure)
+    batch_size = 1
+    dummy_obs = torch.randn(batch_size, 3, 224, 224)
+    dummy_goal = torch.randn(batch_size, 3, 224, 224)
+    dummy_path = torch.randn(batch_size, 10, 3, 224, 224) # Sequence of 10 keyframes
+    
+    print("Encoding inputs...")
+    with torch.no_grad():
+        obs_emb = visual_encoder(dummy_obs)
+        goal_emb = goal_encoder(dummy_goal)
         
-        # 2. Get current camera feed and depth (from simulation/interface)
-        # For now, let's assume we have a get_frame() function
-        current_frame = await controller.get_camera_frame()
+        # Process path sequence (flattened for the LSTM in this version)
+        path_emb = torch.stack([visual_encoder(dummy_path[:, i]) for i in range(10)], dim=1)
         
-        # 3. Perception: Detect obstacles and match with goal
-        obstacles = perception.detect_obstacles(current_frame)
-        goal_reached = perception.match_goal(current_frame, goal_image_path)
+        print(f"Observation Embedding Shape: {obs_emb.shape}")
+        print(f"Goal Embedding Shape: {goal_emb.shape}")
+        print(f"Path Embedding Shape: {path_emb.shape}")
         
-        if goal_reached:
-            print("Goal reached! Landing...")
-            await controller.land()
-            break
-            
-        # 4. Planning: Determine next move
-        next_move = planner.plan_next_move(current_state, obstacles, goal_image_path)
-        
-        # 5. Control: Execute move
-        await controller.move_to(next_move)
-        
-        await asyncio.sleep(0.1)
+        # 5. Plan action
+        result = planner.plan(obs_emb, path_emb, goal_emb)
+        print(f"Planner Result: {result}")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
