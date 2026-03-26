@@ -29,16 +29,29 @@ class IntegratedPlanner:
         if not isinstance(target_velocity, torch.Tensor):
             target_velocity = torch.Tensor(target_velocity)
             
+        # Ensure prev_velocity is on the same device as target_velocity
+        self.prev_velocity = self.prev_velocity.to(target_velocity.device)
+            
         smoothed_v = self.smoothing * self.prev_velocity + (1 - self.smoothing) * target_velocity
         self.prev_velocity = smoothed_v
         return smoothed_v
 
-    def plan(self, current_obs, path_seq, goal_img, depth_map=None):
+    def plan(self, current_obs, path_seq, goal_img, depth_map=None, vpr_obs=None):
         """
         Determines the final movement command with dynamic safety and smoothing.
+        Args:
+            current_obs: (N, D_pooled) - Siamese/Pooled embedding for goal matching
+            path_seq: (N, T, D_vpr) - Sequence of NetVLAD embeddings for path
+            goal_img: (1, D_pooled) - Targeted goal image embedding
+            depth_map: (N, 1, H, w) - Estimated depth
+            vpr_obs: (N, D_vpr) - NetVLAD embedding for path following (if different from obs)
         """
+        # 0. Set observations for different heads
+        goal_matching_obs = current_obs
+        path_following_obs = vpr_obs if vpr_obs is not None else current_obs
+
         # 1. Check Goal similarity
-        goal_similarity = self.goal_matcher(current_obs, goal_img)
+        goal_similarity = self.goal_matcher(goal_matching_obs, goal_img)
         if goal_similarity > self.goal_threshold:
             v_stop = torch.zeros(3)
             self.prev_velocity = v_stop
@@ -63,7 +76,7 @@ class IntegratedPlanner:
                 }
 
         # 3. Decision Fusion
-        path_velocity = self.path_follower(current_obs, path_seq).squeeze(0)
+        path_velocity = self.path_follower(path_following_obs, path_seq).squeeze(0)
         
         # Weighted blend
         if goal_similarity > 0.6:

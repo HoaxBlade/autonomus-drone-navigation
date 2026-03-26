@@ -30,7 +30,7 @@ class NavigationTrainer:
         
         # 3. Policies
         self.path_follower = PathFollower(input_dim=self.visual_encoder.output_dim).to(self.device)
-        self.goal_matcher = GoalMatcher(input_dim=self.visual_encoder.output_dim).to(self.device)
+        self.goal_matcher = GoalMatcher(input_dim=self.backbone.out_channels).to(self.device)
         
         # Optimizer for all parameters
         self.optimizer = optim.Adam(
@@ -77,10 +77,11 @@ class NavigationTrainer:
             
             # 2. Navigation Forward Pass (VPR + Policy)
             images_flat = images_seq.view(N * T, C, H, W)
-            features_seq = self.visual_encoder(images_flat).view(N, T, -1)
-            current_obs = features_seq[:, -1, :]
+            features_vpr_seq = self.visual_encoder(images_flat).view(N, T, -1)
+            current_vpr_obs = features_vpr_seq[:, -1, :]
             
-            predicted_action = self.path_follower(current_obs, features_seq)
+            # Predict action from path follower
+            predicted_action = self.path_follower(current_vpr_obs, features_vpr_seq)
             nav_loss = self.nav_criterion(predicted_action, target_motion)
             
             # 3. Combined Multi-task Loss

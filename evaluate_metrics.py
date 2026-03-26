@@ -20,7 +20,7 @@ def evaluate_system(data_dir):
     goal_encoder = GoalEncoder(backbone).to(device)
     depth_encoder = DepthEncoder(backbone).to(device)
     path_follower = PathFollower(input_dim=visual_encoder.output_dim).to(device)
-    goal_matcher = GoalMatcher(input_dim=visual_encoder.output_dim).to(device)
+    goal_matcher = GoalMatcher(input_dim=backbone.out_channels).to(device)
     
     planner = IntegratedPlanner(path_follower, goal_matcher)
     
@@ -50,14 +50,20 @@ def evaluate_system(data_dir):
             target_motion = target_motion.to(device)
             
             # Perception
-            obs_emb = visual_encoder(current_obs)
-            # Use last frame as goal for local test
-            goal_emb = goal_encoder(current_obs) 
+            # 1. NetVLAD embedding (32768) for the path follower
+            obs_vpr = visual_encoder(current_obs)
+            # 2. Pooled embedding (512) for the goal matcher
+            obs_siamese = goal_encoder(current_obs)
+            # 3. Target goal embedding (512)
+            goal_siamese = goal_encoder(current_obs) # Test against self
+            
             depth_map = depth_encoder(current_obs)
             
             # Planning
-            features_seq = visual_encoder(images_seq.view(-1, 3, 224, 224)).view(1, 10, -1)
-            result = planner.plan(obs_emb, features_seq, goal_emb, depth_map=depth_map)
+            features_vpr_seq = visual_encoder(images_seq.view(-1, 3, 224, 224)).view(1, 10, -1)
+            
+            # Pass Siamese/Pooled features for goal-matching, and NetVLAD for path-following
+            result = planner.plan(obs_siamese, features_vpr_seq, goal_siamese, depth_map=depth_map, vpr_obs=obs_vpr)
             
             # Metrics Calculation
             pred_v = torch.FloatTensor(result['velocity']).to(device)

@@ -26,22 +26,24 @@ def main():
     
     print("Encoding environmental and goal data with Unified Backbone...")
     with torch.no_grad():
-        # Using the same backbone for multiple heads
-        obs_emb = visual_encoder(dummy_obs)
-        goal_emb = goal_encoder(dummy_goal)
+        # High-level goal/visual alignment (Pooled 512)
+        obs_siamese = goal_encoder(dummy_obs)
+        goal_siamese = goal_encoder(dummy_goal)
+        
+        # Place Recognition / Path Following (NetVLAD 32768)
+        obs_vpr = visual_encoder(dummy_obs)
+        path_vpr = torch.stack([visual_encoder(dummy_path[:, i]) for i in range(10)], dim=1)
+        
+        # Geometry
         depth_map = depth_encoder(dummy_obs)
         
-        # Process path sequence
-        path_emb = torch.stack([visual_encoder(dummy_path[:, i]) for i in range(10)], dim=1)
-        
         print(f"Perception Status: Success")
-        print(f" - Geometry: Estimated {depth_map.shape[2]}x{depth_map.shape[3]} depth map for obstacle avoidance.")
-        print(f" - Live View: Extracted {obs_emb.shape[1]} unique visual features using NetVLAD.")
-        print(f" - Path Memory: Loaded {path_emb.shape[1]} keyframes for the current route.")
-        print(f" - Goal Target: Destination features successfully encoded.")
+        print(f" - Geometry: Estimated {depth_map.shape[2]}x{depth_map.shape[3]} depth map.")
+        print(f" - VPR Features: {obs_vpr.shape[1]} descriptors for path memory.")
+        print(f" - Goal Signal: Siamese alignment prepared.")
         
-        # 6. Plan action with geometric awareness
-        result = planner.plan(obs_emb, path_emb, goal_emb, depth_map=depth_map)
+        # 6. Plan action with geometric awareness and dual embeddings
+        result = planner.plan(obs_siamese, path_vpr, goal_siamese, depth_map=depth_map, vpr_obs=obs_vpr)
         
         print("\nNavigation Decision (v2.1):")
         action = result.get("action")
