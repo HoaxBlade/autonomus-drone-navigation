@@ -1,22 +1,31 @@
-PHASE 7: CLOSED-LOOP SIMULATION ROADMAP (v2.5)
+PHASE 7: HIGH-FIDELITY CLOSED-LOOP SIMULATION
 
 OVERVIEW:
-Transition from offline dataset replaying (TartanAir) to real-time, closed-loop simulation where the drone's actions actively change its environment.
+Transition from offline replaying to a high-fidelity, closed-loop simulation designed to minimize the sim-to-real gap.
 
-OBJECTIVES:
-1. Implement a real-time simulator bridge (Habitat-Sim).
-2. Create a drone dynamics controller for realistic movement.
-3. Establish a continuous navigation loop for autonomous flight.
+1. SIMULATOR BRIDGE (Habitat-Sim)
+- Photorealistic 3D environment loading (Gibson/HM3D).
+- Timing: Fixed 30Hz control loop with 10Hz perception updates.
+- Data: Real-time RGB and Depth frame rendering.
 
-COMPONENTS:
-- habitat_bridge.py: Handles 3D rendering (RGB/Depth) and environment interaction.
-- dynamics.py: Calculates pose updates based on velocity, inertia, and physics.
-- sim_runner.py: The main engine that ties perception, planning, and simulation together.
+2. SECOND-ORDER DYNAMICS
+- State Tracking: position [x,y,z] and velocity [vx,vy,vz].
+- Physics Logic: v_t = v_t-1 + (acceleration - damping * velocity) * dt.
+- Realistic constraints for max speed and motor response latency.
+- Safety: Identical emergency braking logic to the physical drone (1.5m margin).
 
-VERIFICATION:
-- Performance: Measure success rate of autonomously reaching 3D goal coordinates.
-- Safety: Verify the obstacle avoidance system triggers emergency braking in 3D space.
-- Efficiency: Calculate the success weighted by path length (SPL).
+3. EPISODE STRUCTURE
+- Reset: Randomized start and goal coordinate pairs for every trial.
+- Failure: Episode ends on collision or exceeding 500 steps (Timeout).
+- Success: Reaching within 1.0m of the goal coordinate.
+
+4. LOGGING AND VISUALIZATION
+- Step Logging: Save position, velocity, and goal distance to HDF5/CSV.
+- Visualization: Top-down trajectory overlay and real-time goal heatmap.
+
+5. METRICS
+- Success Rate (SR): Percentage of completed missions.
+- SPL: Success weighted by Path Length (Efficiency metric).
 
 STATUS:
-Planning Complete. Ready for Implementation.
+Systems Engineering Review Complete. Ready for Implementation.
