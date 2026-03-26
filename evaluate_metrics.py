@@ -8,11 +8,13 @@ from drone_nav.control.planner import IntegratedPlanner
 from train.data_loaders import TartanAirDataset
 from torchvision import transforms
 
+from drone_nav.utils.device import get_device
+
 def evaluate_system(data_dir):
     print(f"--- STARTING FORMAL EVALUATION (v2.2) ---")
     print(f"Target Sequence: {data_dir.split('/')[-1]}")
     
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    device = get_device()
     
     # 1. Initialize Stack
     backbone = PerceptionBackbone(architecture='resnet18').to(device)
