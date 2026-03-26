@@ -9,15 +9,21 @@ from drone_nav.nav.goal_matcher import GoalMatcher
 from train.data_loaders import TartanAirDataset
 
 class NavigationTrainer:
-    def __init__(self, data_dir, lr=1e-4, batch_size=8, seq_length=10):
-        # Set device
-        # Universal Device Logic (CUDA/MPS/CPU)
+    def __init__(self, datasets_config, lr=1e-4, batch_size=2, seq_length=10, freeze_backbone=True):
+        """
+        datasets_config: List of dicts, e.g., 
+        [{'type': 'tartanair', 'path': '...'}, {'type': 'tum', 'path': '...'}]
+        """
         from drone_nav.utils.device import get_device
         self.device = get_device()
         print(f"Trainer Initialized on: {self.device}")
 
         # 1. Unified Backbone
         self.backbone = PerceptionBackbone(architecture='resnet18').to(self.device)
+        if freeze_backbone:
+            for param in self.backbone.parameters():
+                param.requires_grad = False
+            print("Backbone frozen to save memory.")
         
         # 2. Specialized Heads
         self.visual_encoder = VisualEncoder(self.backbone, use_netvlad=True).to(self.device)
@@ -28,26 +34,37 @@ class NavigationTrainer:
         self.path_follower = PathFollower(input_dim=self.visual_encoder.output_dim).to(self.device)
         self.goal_matcher = GoalMatcher(input_dim=self.backbone.out_channels).to(self.device)
         
-        # Optimizer for all parameters
-        self.optimizer = optim.Adam(
-            list(self.backbone.parameters()) + 
-            list(self.path_follower.parameters()) + 
-            list(self.goal_matcher.parameters()) +
-            list(self.depth_encoder.parameters()),
-            lr=lr
-        )
+        # Optimizer (excluding frozen params)
+        params = list(self.path_follower.parameters()) + \
+                 list(self.goal_matcher.parameters()) + \
+                 list(self.depth_encoder.parameters())
+        if not freeze_backbone:
+            params += list(self.backbone.parameters())
+        self.optimizer = optim.Adam(params, lr=lr)
         
         self.nav_criterion = nn.MSELoss()
         self.depth_criterion = nn.MSELoss()
 
-        # Data Loading
+        # 4. Multi-Dataset Loading
+        from train.data_loaders import TartanAirDataset, TUMDataset, EuRoCDataset, CombinedNavigationDataset
         transform = transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
         
-        self.dataset = TartanAirDataset(data_dir, transform=transform, seq_length=seq_length)
+        all_datasets = []
+        for config in datasets_config:
+            d_type = config['type']
+            d_path = config['path']
+            if d_type == 'tartanair':
+                all_datasets.append(TartanAirDataset(d_path, transform=transform, seq_length=seq_length))
+            elif d_type == 'tum':
+                all_datasets.append(TUMDataset(d_path, transform=transform, seq_length=seq_length))
+            elif d_type == 'euroc':
+                all_datasets.append(EuRoCDataset(d_path, transform=transform, seq_length=seq_length))
+
+        self.dataset = CombinedNavigationDataset(all_datasets)
         self.dataloader = DataLoader(self.dataset, batch_size=batch_size, shuffle=True)
 
     def train_epoch(self, epoch):

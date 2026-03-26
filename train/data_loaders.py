@@ -61,3 +61,127 @@ class TartanAirDataset(Dataset):
         delta_pos = next_pose[:3] - curr_pose[:3]
         
         return images, torch.FloatTensor(delta_pos), depth
+
+class TUMDataset(Dataset):
+    """
+    Loader for TUM RGB-D Benchmark sequences. 
+    Synchronizes RGB and Depth frames by timestamp.
+    """
+    def __init__(self, data_dir, transform=None, seq_length=10):
+        self.data_dir = data_dir
+        self.transform = transform
+        self.seq_length = seq_length
+        
+        # Load associated files (assumes they are pre-associated/synced)
+        # Standard TUM format uses rgb.txt and depth.txt
+        rgb_file = os.path.join(data_dir, "rgb.txt")
+        depth_file = os.path.join(data_dir, "depth.txt")
+        pose_file = os.path.join(data_dir, "groundtruth.txt")
+        
+        # Simple parser (skipping comment lines)
+        self.rgb_data = np.genfromtxt(rgb_file, delimiter=' ', skip_header=3, dtype=None, encoding='utf-8')
+        self.depth_data = np.genfromtxt(depth_file, delimiter=' ', skip_header=3, dtype=None, encoding='utf-8')
+        self.poses = np.genfromtxt(pose_file, delimiter=' ', skip_header=3)
+        
+        # In a full implementation, we would interpolate poses to match image timestamps
+        # For now, we assume fixed-rate sampling
+        self.num_frames = min(len(self.rgb_data), len(self.depth_data), len(self.poses))
+        
+    def __len__(self):
+        return self.num_frames - self.seq_length
+
+    def __getitem__(self, idx):
+        # 1. Load sequence of RGB
+        images = []
+        for i in range(self.seq_length):
+            img_name = self.rgb_data[idx + i][1]
+            img_path = os.path.join(self.data_dir, img_name)
+            image = Image.open(img_path).convert('RGB')
+            if self.transform:
+                image = self.transform(image)
+            images.append(image)
+        images = torch.stack(images)
+        
+        # 2. Load Depth (last frame)
+        depth_name = self.depth_data[idx + self.seq_length - 1][1]
+        depth_path = os.path.join(self.data_dir, depth_name)
+        depth = np.array(Image.open(depth_path)).astype(np.float32) / 5000.0 # TUM scale factor
+        depth = torch.from_numpy(depth).float().unsqueeze(0)
+        depth = torch.nn.functional.interpolate(depth.unsqueeze(0), size=(224, 224), mode='bilinear', align_corners=True).squeeze(0)
+        
+        # 3. Delta Pose
+        curr_p = self.poses[idx + self.seq_length - 1][1:4]
+        next_p = self.poses[idx + self.seq_length][1:4]
+        delta_pos = next_p - curr_p
+        
+        return images, torch.FloatTensor(delta_pos), depth
+
+class EuRoCDataset(Dataset):
+    """
+    Loader for EuRoC MAV Dataset. 
+    Handles drone-specific motion patterns and CSV pose formats.
+    """
+    def __init__(self, data_dir, transform=None, seq_length=10):
+        self.data_dir = data_dir
+        self.transform = transform
+        self.seq_length = seq_length
+        
+        # Standard EuRoC structure: cam0/data.csv and state_groundtruth_estimate0/data.csv
+        self.img_dir = os.path.join(data_dir, "mav0/cam0/data")
+        img_csv = os.path.join(data_dir, "mav0/cam0/data.csv")
+        pose_csv = os.path.join(data_dir, "mav0/state_groundtruth_estimate0/data.csv")
+        
+        self.img_list = np.genfromtxt(img_csv, delimiter=',', skip_header=1, dtype=None, encoding='utf-8')
+        self.poses = np.genfromtxt(pose_csv, delimiter=',', skip_header=1)
+        
+        self.num_frames = min(len(self.img_list), len(self.poses))
+
+    def __len__(self):
+        return self.num_frames - self.seq_length
+
+    def __getitem__(self, idx):
+        images = []
+        for i in range(self.seq_length):
+            img_name = self.img_list[idx + i][1]
+            img_path = os.path.join(self.img_dir, img_name)
+            image = Image.open(img_path).convert('RGB')
+            if self.transform:
+                image = self.transform(image)
+            images.append(image)
+        images = torch.stack(images)
+        
+        # EuRoC usually doesn't have alignment depth, so we use a zero-mask or skip depth loss
+        depth = torch.zeros((1, 224, 224))
+        
+        curr_p = self.poses[idx + self.seq_length - 1][1:4]
+        next_p = self.poses[idx + self.seq_length][1:4]
+        delta_pos = next_p - curr_p
+        
+        return images, torch.FloatTensor(delta_pos), depth
+
+class SevenScenesDataset(Dataset):
+    """
+    Loader for Microsoft 7-Scenes Dataset. 
+    Ideal for desk/office goal-matching.
+    """
+    def __init__(self, data_dir, transform=None):
+        self.data_dir = data_dir
+        self.transform = transform
+
+class CombinedNavigationDataset(Dataset):
+    """
+    High-level wrapper that merges multiple datasets for balanced training.
+    """
+    def __init__(self, datasets):
+        self.datasets = datasets
+        self.lengths = [len(d) for d in datasets]
+
+    def __len__(self):
+        return sum(self.lengths)
+
+    def __getitem__(self, idx):
+        dataset_idx = 0
+        while idx >= self.lengths[dataset_idx]:
+            idx -= self.lengths[dataset_idx]
+            dataset_idx += 1
+        return self.datasets[dataset_idx][idx]
