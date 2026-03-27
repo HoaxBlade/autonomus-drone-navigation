@@ -60,7 +60,15 @@ class TartanAirDataset(Dataset):
         next_pose = self.poses[idx + self.seq_length]
         delta_pos = next_pose[:3] - curr_pose[:3]
         
-        return images, torch.FloatTensor(delta_pos), depth
+        # 4. Siamese Goal Selection (10-20 steps into the future)
+        # If we are near the end, we just use the last possible frame
+        goal_idx = min(idx + self.seq_length + 15, len(self.img_files) - 1)
+        goal_path = os.path.join(self.img_dir, self.img_files[goal_idx])
+        goal_image = Image.open(goal_path).convert('RGB')
+        if self.transform:
+            goal_image = self.transform(goal_image)
+            
+        return images, torch.FloatTensor(delta_pos), depth, goal_image
 
 class TUMDataset(Dataset):
     """

@@ -21,9 +21,16 @@ class NavigationTrainer:
         # 1. Unified Backbone
         self.backbone = PerceptionBackbone(architecture='resnet18').to(self.device)
         if freeze_backbone:
+            # FREEZE ALL, then UNFREEZE LAST BLOCK (layer 4)
             for param in self.backbone.parameters():
                 param.requires_grad = False
-            print("Backbone frozen to save memory.")
+            
+            # PerceptionBackbone stores ResNet layers in self.features Sequential
+            # features[-1] is Layer 4 in ResNet-18
+            for param in self.backbone.features[-1].parameters():
+                param.requires_grad = True
+            
+            print("Backbone: LAYER 4 Unfrozen (Capacity Optimized), Others Frozen.")
         
         # 2. Specialized Heads
         self.visual_encoder = VisualEncoder(self.backbone, use_netvlad=True).to(self.device)
@@ -74,23 +81,20 @@ class NavigationTrainer:
         self.backbone.train()
         self.depth_encoder.train()
         self.path_follower.train()
-        
-        total_loss = 0.0
-        for i, (images_seq, target_motion, target_depth) in enumerate(self.dataloader):
-            images_seq = images_seq.to(self.device)
-            target_motion = target_motion.to(self.device)
-            target_depth = target_depth.to(self.device)
+        # Main training loop
+        total_loss = 0
+        for i, (images_seq, target_motion, target_depth, goal_image) in enumerate(self.dataloader):
+            images_seq, target_motion = images_seq.to(self.device), target_motion.to(self.device)
+            target_depth, goal_image = target_depth.to(self.device), goal_image.to(self.device)
             
             self.optimizer.zero_grad()
             
-            # 1. Shared Backbone Forward Pass
+            # 1. Depth Estimation (Geometry Head)
             N, T, C, H, W = images_seq.shape
             last_frame = images_seq[:, -1, :, :, :] # (N, C, H, W)
-            
-            # Predict Depth (Geometry Head)
             predicted_depth = self.depth_encoder(last_frame)
             
-            # LOG-SCALE NORMALIZATION: Resolving the 13,000+ loss bottleneck
+            # LOG-SCALE NORMALIZATION
             # TartanAir depth can be 0-100m. We map it to log space for stable gradients.
             target_depth_ln = torch.log1p(target_depth)
             predicted_depth_ln = torch.log1p(predicted_depth * 10.0) # Scale pred to match
@@ -106,13 +110,17 @@ class NavigationTrainer:
             predicted_action = self.path_follower(current_vpr_obs, features_vpr_seq)
             nav_loss = self.nav_criterion(predicted_action, target_motion)
             
-            # 3. Goal Similarity (Siamese)
-            obs_siamese = self.goal_encoder(last_frame)
-            # TRAINING LOGIC: Compare current frame to a goal frame (simplified for now)
-            goal_loss = self.nav_criterion(obs_siamese, obs_siamese.detach()) 
+            # 3. Goal Similarity (Siamese Matching)
+            obs_features = self.backbone(last_frame)
+            goal_features = self.backbone(goal_image)
+            
+            # We want current features to be "similar" to goal features
+            # In a real Siamese network, we would use Triplet Loss or Contrastive Loss.
+            # For this Phase, we'll use MSE loss between the feature vectors.
+            goal_loss = self.nav_criterion(obs_features, goal_features)
             
             # 4. Multi-task Loss Balancing
-            w_nav, w_depth, w_goal = 1.0, 1.0, 1.0 # Re-balanced after normalization
+            w_nav, w_depth, w_goal = 1.0, 1.0, 0.5 # Add weight to Goal loss
             
             loss = (w_nav * nav_loss) + (w_depth * depth_loss) + (w_goal * goal_loss)
             
