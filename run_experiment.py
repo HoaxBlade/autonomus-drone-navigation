@@ -29,9 +29,16 @@ if __name__ == "__main__":
     try:
         trainer = NavigationTrainer(datasets_config=datasets_config, lr=1e-4, batch_size=2)
         
+        import torch
         for epoch in range(1, 31):
             avg_loss = trainer.train_epoch(epoch)
             print(f"Epoch {epoch} Complete. Average Multi-Task Loss: {avg_loss:.4f}")
+            
+            # Save checkpoint every epoch
+            checkpoint_path = f"checkpoints/nav_stack_epoch_{epoch}.pth"
+            torch.save(trainer.get_checkpoint(), checkpoint_path)
+            # Maintain a latest link
+            torch.save(trainer.get_checkpoint(), "checkpoints/nav_stack_latest.pth")
             
     except Exception as e:
         print(f"[ERROR] Training failed: {e}")

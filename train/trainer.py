@@ -146,6 +146,17 @@ class NavigationTrainer:
 
         return total_loss / len(self.dataloader)
 
+    def get_checkpoint(self):
+        """Returns the current state of all weights for saving."""
+        return {
+            'backbone': self.backbone.state_dict(),
+            'visual_encoder': self.visual_encoder.state_dict(),
+            'goal_encoder': self.goal_encoder.state_dict(),
+            'depth_encoder': self.depth_encoder.state_dict(),
+            'path_follower': self.path_follower.state_dict(),
+            'goal_matcher': self.goal_matcher.state_dict()
+        }
+
 if __name__ == "__main__":
     config = [{'type': 'tartanair', 'path': 'data/tartanair_shibuya/TartanAir_shibuya/RoadCrossing03'}]
     trainer = NavigationTrainer(datasets_config=config)
