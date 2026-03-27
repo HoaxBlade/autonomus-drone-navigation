@@ -21,16 +21,17 @@ class NavigationTrainer:
         # 1. Unified Backbone
         self.backbone = PerceptionBackbone(architecture='resnet18').to(self.device)
         if freeze_backbone:
-            # FREEZE ALL, then UNFREEZE LAST BLOCK (layer 4)
+            # FREEZE ALL, then UNFREEZE LAST TWO BLOCKS (layer 3 & 4)
             for param in self.backbone.parameters():
                 param.requires_grad = False
             
             # PerceptionBackbone stores ResNet layers in self.features Sequential
-            # features[-1] is Layer 4 in ResNet-18
+            # features[-1] = Layer 4, features[-2] = Layer 3
+            print("Backbone: LAYER 3 & 4 Unfrozen (Deep Capacity), Others Frozen.")
             for param in self.backbone.features[-1].parameters():
                 param.requires_grad = True
-            
-            print("Backbone: LAYER 4 Unfrozen (Capacity Optimized), Others Frozen.")
+            for param in self.backbone.features[-2].parameters():
+                param.requires_grad = True
         
         # 2. Specialized Heads
         self.visual_encoder = VisualEncoder(self.backbone, use_netvlad=True).to(self.device)

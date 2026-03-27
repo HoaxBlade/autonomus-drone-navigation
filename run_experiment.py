@@ -29,7 +29,7 @@ if __name__ == "__main__":
     try:
         trainer = NavigationTrainer(datasets_config=datasets_config, lr=1e-4, batch_size=2)
         
-        for epoch in range(1, 11):
+        for epoch in range(1, 31):
             avg_loss = trainer.train_epoch(epoch)
             print(f"Epoch {epoch} Complete. Average Multi-Task Loss: {avg_loss:.4f}")
             
