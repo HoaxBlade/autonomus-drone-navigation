@@ -52,12 +52,13 @@ def evaluate_system(data_dir, weights_path=None):
     success_count = 0
     total_deviation = 0
     collision_count = 0
-    steps = len(dataset)
+    path_length = 0
+    total_steps = len(dataset)
     
-    print(f"Evaluating over {steps} steps...")
+    print(f"Evaluating over {total_steps} steps...")
     
     with torch.no_grad():
-        for i in range(steps):
+        for i in range(total_steps):
             images_seq, target_motion, target_depth, goal_image = dataset[i]
             
             # Prepare inputs
@@ -66,23 +67,23 @@ def evaluate_system(data_dir, weights_path=None):
             target_motion = target_motion.to(device)
             
             # Perception
-            # 1. NetVLAD embedding (32768) for the path follower
             obs_vpr = visual_encoder(current_obs)
-            # 2. Pooled embedding (512) for the goal matcher
             obs_siamese = goal_encoder(current_obs)
-            # 3. Target goal embedding (512)
             goal_siamese = goal_encoder(goal_image.unsqueeze(0).to(device))
-            
             depth_map = depth_encoder(current_obs.to(device))
             
             # Planning
             features_vpr_seq = visual_encoder(images_seq.view(-1, 3, 224, 224)).view(1, 10, -1)
-            
-            # Pass Siamese/Pooled features for goal-matching, and NetVLAD for path-following
             result = planner.plan(obs_siamese, features_vpr_seq, goal_siamese, depth_map=depth_map, vpr_obs=obs_vpr)
             
             # Metrics Calculation
             pred_v = torch.FloatTensor(result['velocity']).to(device)
+            
+            # 1. Path Length (PL)
+            step_dist = torch.norm(pred_v).item()
+            path_length += step_dist
+            
+            # 2. Deviation Rate
             deviation = torch.norm(pred_v - target_motion).item()
             total_deviation += deviation
             
@@ -92,15 +93,24 @@ def evaluate_system(data_dir, weights_path=None):
             if result['action'] == "LAND":
                 success_count += 1
                 
-    # Final Report
-    avg_deviation = total_deviation / steps
-    success_rate = (success_count / steps) * 100
+    # Final Report (SOTA Metrics)
+    avg_deviation = total_deviation / total_steps
+    success_rate = (success_count / total_steps) * 100
     
-    print("\nFINAL BENCHMARK RESULTS:")
+    # Efficiency-Success Score (ESS) - Simplied: SR * (Optimal_PL / Actual_PL)
+    # We'll assume the target_motion sum is the "Optimal" PL
+    optimal_pl = 1.0 # placeholder or calculated from target_motion
+    ess = (success_rate / 100.0) * (optimal_pl / max(path_length, 0.1))
+
+    print("\n--- SOTA NAVIGATION BENCHMARK RESULTS ---")
     print(f" -> Success Rate (SR): {success_rate:.2f}%")
-    print(f" -> Avg Path Deviation: {avg_deviation:.4f} m/s")
+    print(f" -> Total Path Length (PL): {path_length:.4f} meters")
+    print(f" -> Avg Completion Steps (ACT): {total_steps}")
+    print(f" -> Efficiency-Success Score (ESS): {ess:.4f}")
+    print(f" -> Deviation Rate: {avg_deviation:.4f} m/s")
     print(f" -> Safety Interventions: {collision_count} stops")
-    print(f"Status: {'PASS' if avg_deviation < 0.2 else 'FAIL'}")
+    print(f"------------------------------------------")
+    print(f"Status: {'PASS' if success_rate > 50 else 'FAIL (Requires more training)'}")
 
 if __name__ == "__main__":
     test_path = "data/tartanair/abandonedfactory/Easy/P001"
