@@ -1,6 +1,9 @@
-import torch
-import numpy as np
 import os
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent))
+import torch
 from drone_nav.perception.encoders import PerceptionBackbone, VisualEncoder, GoalEncoder, DepthEncoder
 from drone_nav.nav.path_follower import PathFollower
 from drone_nav.nav.goal_matcher import GoalMatcher
@@ -55,7 +58,7 @@ def evaluate_system(data_dir, weights_path=None):
     
     with torch.no_grad():
         for i in range(steps):
-            images_seq, target_motion, target_depth = dataset[i]
+            images_seq, target_motion, target_depth, goal_image = dataset[i]
             
             # Prepare inputs
             images_seq = images_seq.unsqueeze(0).to(device)
@@ -68,9 +71,9 @@ def evaluate_system(data_dir, weights_path=None):
             # 2. Pooled embedding (512) for the goal matcher
             obs_siamese = goal_encoder(current_obs)
             # 3. Target goal embedding (512)
-            goal_siamese = goal_encoder(current_obs) # Test against self
+            goal_siamese = goal_encoder(goal_image.unsqueeze(0).to(device))
             
-            depth_map = depth_encoder(current_obs)
+            depth_map = depth_encoder(current_obs.to(device))
             
             # Planning
             features_vpr_seq = visual_encoder(images_seq.view(-1, 3, 224, 224)).view(1, 10, -1)
@@ -100,7 +103,7 @@ def evaluate_system(data_dir, weights_path=None):
     print(f"Status: {'PASS' if avg_deviation < 0.2 else 'FAIL'}")
 
 if __name__ == "__main__":
-    test_path = "data/tartanair_shibuya/TartanAir_shibuya/RoadCrossing03"
+    test_path = "data/tartanair/abandonedfactory/Easy/P001"
     checkpoint_path = "checkpoints/nav_stack_v2_2.pth"
     if os.path.exists(test_path):
         evaluate_system(test_path, weights_path=checkpoint_path if os.path.exists(checkpoint_path) else None)
