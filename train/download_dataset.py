@@ -1,4 +1,5 @@
 import os
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 from huggingface_hub import hf_hub_download
 import zipfile
 import shutil
