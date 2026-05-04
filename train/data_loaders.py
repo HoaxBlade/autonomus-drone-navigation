@@ -39,7 +39,7 @@ class TartanAirDataset(Dataset):
         # 2. Load Depth for the current frame (last in sequence)
         depth_dir = os.path.join(self.data_dir, "depth_0")
         img_name = self.img_files[idx + self.seq_length - 1]
-        depth_name = img_name.replace('.png', '_left_depth.npy') # TartanAir usually uses .npy for depth
+        depth_name = img_name.replace('.png', '_depth.npy') # If img is 000000_left.png, depth is 000000_left_depth.npy
         # If .npy doesn't exist, check for .png depth
         depth_path = os.path.join(depth_dir, depth_name)
         if not os.path.exists(depth_path):

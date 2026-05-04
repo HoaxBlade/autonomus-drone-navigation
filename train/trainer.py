@@ -158,7 +158,7 @@ class NavigationTrainer:
         }
 
 if __name__ == "__main__":
-    config = [{'type': 'tartanair', 'path': 'data/tartanair_shibuya/TartanAir_shibuya/RoadCrossing03'}]
+    config = [{'type': 'tartanair', 'path': 'data/tartanair/abandonedfactory/Easy/P001'}]
     trainer = NavigationTrainer(datasets_config=config)
     for epoch in range(1, 11):
         avg_loss = trainer.train_epoch(epoch)
