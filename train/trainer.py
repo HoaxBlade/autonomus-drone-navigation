@@ -59,11 +59,15 @@ class NavigationTrainer:
         self.depth_criterion = nn.MSELoss()
 
         # 4. Multi-Dataset Loading
-        from train.data_loaders import TartanAirDataset, TUMDataset, EuRoCDataset, CombinedNavigationDataset
+        from train.data_loaders import TartanAirDataset, TUMDataset, EuRoCDataset, CombinedNavigationDataset, GaussianNoise
+        
+        # Robust Perception (Sim-to-Real Bridge)
         transform = transforms.Compose([
             transforms.Resize((224, 224)),
+            transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.1, hue=0.05),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            GaussianNoise(sigma=0.01)
         ])
         
         all_datasets = []

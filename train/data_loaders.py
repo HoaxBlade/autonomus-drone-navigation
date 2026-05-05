@@ -3,6 +3,18 @@ import torch
 from torch.utils.data import Dataset
 from PIL import Image
 import numpy as np
+from torchvision import transforms
+
+class GaussianNoise(object):
+    """Factual noise injection to simulate electronic sensor grain."""
+    def __init__(self, sigma=0.01):
+        self.sigma = sigma
+
+    def __call__(self, tensor):
+        return tensor + torch.randn(tensor.size()) * self.sigma
+
+    def __repr__(self):
+        return self.__class__.__name__ + f'(sigma={self.sigma})'
 
 class TartanAirDataset(Dataset):
     """
