@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from drone_nav.perception.encoders import PerceptionBackbone, VisualEncoder, GoalEncoder, DepthEncoder
+from drone_nav.perception.encoders import PerceptionBackbone, VisualEncoder, GoalEncoder, DepthEncoder, MemoryModule
 from drone_nav.nav.path_follower import PathFollower
 from drone_nav.nav.goal_matcher import GoalMatcher
 from train.data_loaders import TartanAirDataset
@@ -43,14 +43,16 @@ class NavigationTrainer:
         self.goal_encoder = GoalEncoder(self.backbone).to(self.device)
         self.depth_encoder = DepthEncoder(self.backbone).to(self.device)
         
-        # 3. Policies
-        self.path_follower = PathFollower(input_dim=self.visual_encoder.output_dim).to(self.device)
+        # 3. Memory & Policies
+        self.memory = MemoryModule(input_dim=self.visual_encoder.output_dim).to(self.device)
+        self.path_follower = PathFollower(input_dim=self.memory.hidden_dim).to(self.device)
         self.goal_matcher = GoalMatcher(input_dim=self.backbone.out_channels).to(self.device)
         
         # Optimizer (excluding frozen params)
         params = list(self.path_follower.parameters()) + \
                  list(self.goal_matcher.parameters()) + \
-                 list(self.depth_encoder.parameters())
+                 list(self.depth_encoder.parameters()) + \
+                 list(self.memory.parameters())
         if not freeze_backbone:
             params += list(self.backbone.parameters())
         self.optimizer = optim.Adam(params, lr=lr)
@@ -62,12 +64,26 @@ class NavigationTrainer:
         if weights_path and os.path.exists(weights_path):
             print(f"Loading weights from {weights_path}")
             checkpoint = torch.load(weights_path, map_location=self.device)
-            self.backbone.load_state_dict(checkpoint.get('backbone', {}))
-            self.visual_encoder.load_state_dict(checkpoint.get('visual_encoder', {}))
-            self.goal_encoder.load_state_dict(checkpoint.get('goal_encoder', {}))
-            self.depth_encoder.load_state_dict(checkpoint.get('depth_encoder', {}))
-            self.path_follower.load_state_dict(checkpoint.get('path_follower', {}))
-            self.goal_matcher.load_state_dict(checkpoint.get('goal_matcher', {}))
+            
+            # Load vision components (compatible)
+            self.backbone.load_state_dict(checkpoint.get('backbone', {}), strict=False)
+            self.visual_encoder.load_state_dict(checkpoint.get('visual_encoder', {}), strict=False)
+            self.goal_encoder.load_state_dict(checkpoint.get('goal_encoder', {}), strict=False)
+            self.depth_encoder.load_state_dict(checkpoint.get('depth_encoder', {}), strict=False)
+            self.goal_matcher.load_state_dict(checkpoint.get('goal_matcher', {}), strict=False)
+            
+            # For Memory and PathFollower, only load if dimensions match (otherwise start fresh)
+            try:
+                self.path_follower.load_state_dict(checkpoint.get('path_follower', {}))
+                print("PathFollower weights loaded successfully.")
+            except RuntimeError:
+                print("Architecture mismatch in PathFollower: Starting control logic from scratch.")
+                
+            try:
+                self.memory.load_state_dict(checkpoint.get('memory', {}))
+                print("Memory weights loaded successfully.")
+            except (RuntimeError, AttributeError):
+                print("New Memory Module detected: Initializing with random weights.")
 
         # 4. Multi-Dataset Loading
         from train.data_loaders import TartanAirDataset, TUMDataset, EuRoCDataset, CombinedNavigationDataset, GaussianNoise
@@ -121,14 +137,16 @@ class NavigationTrainer:
             predicted_depth_ln = torch.log1p(predicted_depth * 10.0) # Scale pred to match
             depth_loss = self.depth_criterion(predicted_depth_ln, target_depth_ln)
             
-            # 2. Navigation Forward Pass (VPR + Policy)
-            # ... existing lines ...
+            # 2. Navigation Forward Pass (VPR + Memory + Policy)
             images_flat = images_seq.view(N * T, C, H, W)
             features_vpr_seq = self.visual_encoder(images_flat).view(N, T, -1)
-            current_vpr_obs = features_vpr_seq[:, -1, :]
             
-            # Predict action from path follower
-            predicted_action = self.path_follower(current_vpr_obs, features_vpr_seq)
+            # Phase 2: Memory Integration
+            memory_seq, _ = self.memory(features_vpr_seq)
+            last_memory_state = memory_seq[:, -1, :]
+            
+            # Predict action from path follower using temporal context
+            predicted_action = self.path_follower(last_memory_state, memory_seq)
             nav_loss = self.nav_criterion(predicted_action, target_motion)
             
             # 3. Goal Similarity (Siamese Matching)
@@ -174,7 +192,8 @@ class NavigationTrainer:
             'goal_encoder': self.goal_encoder.state_dict(),
             'depth_encoder': self.depth_encoder.state_dict(),
             'path_follower': self.path_follower.state_dict(),
-            'goal_matcher': self.goal_matcher.state_dict()
+            'goal_matcher': self.goal_matcher.state_dict(),
+            'memory': self.memory.state_dict()
         }
 
 if __name__ == "__main__":

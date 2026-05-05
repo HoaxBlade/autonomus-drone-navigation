@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent))
 import torch
-from drone_nav.perception.encoders import PerceptionBackbone, VisualEncoder, GoalEncoder, DepthEncoder
+from drone_nav.perception.encoders import PerceptionBackbone, VisualEncoder, GoalEncoder, DepthEncoder, MemoryModule
 from drone_nav.nav.path_follower import PathFollower
 from drone_nav.nav.goal_matcher import GoalMatcher
 from drone_nav.control.planner import IntegratedPlanner
@@ -24,21 +24,32 @@ def evaluate_system(data_dir, weights_path=None):
     visual_encoder = VisualEncoder(backbone).to(device)
     goal_encoder = GoalEncoder(backbone).to(device)
     depth_encoder = DepthEncoder(backbone).to(device)
-    path_follower = PathFollower(input_dim=visual_encoder.output_dim).to(device)
+    memory = MemoryModule(input_dim=visual_encoder.output_dim).to(device)
+    path_follower = PathFollower(input_dim=memory.hidden_dim).to(device)
     goal_matcher = GoalMatcher(input_dim=backbone.out_channels).to(device)
     
     # Load weights if provided
     if weights_path and os.path.exists(weights_path):
         print(f"Loading trained weights from: {weights_path}")
         checkpoint = torch.load(weights_path, map_location=device, weights_only=True)
-        backbone.load_state_dict(checkpoint['backbone'])
-        visual_encoder.load_state_dict(checkpoint['visual_encoder'])
-        goal_encoder.load_state_dict(checkpoint['goal_encoder'])
-        depth_encoder.load_state_dict(checkpoint['depth_encoder'])
-        path_follower.load_state_dict(checkpoint['path_follower'])
-        goal_matcher.load_state_dict(checkpoint['goal_matcher'])
+        backbone.load_state_dict(checkpoint.get('backbone', {}), strict=False)
+        visual_encoder.load_state_dict(checkpoint.get('visual_encoder', {}), strict=False)
+        goal_encoder.load_state_dict(checkpoint.get('goal_encoder', {}), strict=False)
+        depth_encoder.load_state_dict(checkpoint.get('depth_encoder', {}), strict=False)
+        goal_matcher.load_state_dict(checkpoint.get('goal_matcher', {}), strict=False)
+        
+        try:
+            path_follower.load_state_dict(checkpoint.get('path_follower', {}))
+        except RuntimeError:
+            print("Warning: PathFollower weights incompatible. Evaluation will use random control weights.")
+            
+        try:
+            if 'memory' in checkpoint:
+                memory.load_state_dict(checkpoint['memory'])
+        except RuntimeError:
+            print("Warning: Memory weights incompatible.")
     
-    planner = IntegratedPlanner(path_follower, goal_matcher)
+    planner = IntegratedPlanner(path_follower, goal_matcher, memory=memory)
     
     # 2. Data Loading
     transform = transforms.Compose([

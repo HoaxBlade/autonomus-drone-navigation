@@ -7,11 +7,13 @@ class IntegratedPlanner:
     Industry-grade fusion of Path Following, Goal Seeking, and Geometric Safety.
     Implements: Velocity = (alpha * Path) + (beta * Goal) with Dynamic Safety & Smoothing.
     """
-    def __init__(self, path_follower, goal_matcher, alpha=0.7, beta=0.3, smoothing=0.8):
+    def __init__(self, path_follower, goal_matcher, memory=None, alpha=0.7, beta=0.3, smoothing=0.8):
         self.path_follower = path_follower
         self.goal_matcher = goal_matcher
+        self.memory = memory
         self.alpha = alpha 
         self.beta = beta   
+        self.h = None # Hidden state for memory
         
         # Dynamics & Smoothing
         self.smoothing = smoothing # λ for EMA filter (0.0 = no smoothing, 1.0 = static)
@@ -76,7 +78,13 @@ class IntegratedPlanner:
                 }
 
         # 3. Decision Fusion
-        path_velocity = self.path_follower(path_following_obs, path_seq).squeeze(0)
+        if self.memory is not None:
+            # Memory expects (Batch, Seq, Dim)
+            mem_in = path_seq
+            memory_out, self.h = self.memory(mem_in, self.h)
+            path_velocity = self.path_follower(memory_out[:, -1, :], memory_out).squeeze(0)
+        else:
+            path_velocity = self.path_follower(path_following_obs, path_seq).squeeze(0)
         
         # Weighted blend
         if goal_similarity > 0.6:

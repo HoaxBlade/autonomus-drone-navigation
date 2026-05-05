@@ -79,3 +79,21 @@ class DepthEncoder(nn.Module):
     def forward(self, x):
         features = self.backbone(x)
         return self.decoder(features)
+
+class MemoryModule(nn.Module):
+    """
+    Temporal Memory (GRU) to bridge perception and action.
+    Maintains a 256-dim hidden state across time steps.
+    """
+    def __init__(self, input_dim, hidden_dim=256):
+        super(MemoryModule, self).__init__()
+        self.hidden_dim = hidden_dim
+        self.gru = nn.GRU(input_dim, hidden_dim, batch_first=True)
+
+    def forward(self, x, h=None):
+        """
+        x: (Batch, Seq, InputDim)
+        h: (1, Batch, HiddenDim)
+        """
+        out, h_next = self.gru(x, h)
+        return out, h_next
