@@ -64,12 +64,13 @@ def evaluate_system(data_dir, weights_path=None):
     total_deviation = 0
     collision_count = 0
     path_length = 0
-    total_steps = len(dataset)
+    total_attempts = 1 # We are evaluating 1 sequence here
+    optimal_path_length = 0
     
-    print(f"Evaluating over {total_steps} steps...")
+    print(f"Evaluating over {len(dataset)} steps...")
     
     with torch.no_grad():
-        for i in range(total_steps):
+        for i in range(len(dataset)):
             images_seq, target_motion, target_depth, goal_image, _ = dataset[i]
             
             # Prepare inputs
@@ -98,6 +99,9 @@ def evaluate_system(data_dir, weights_path=None):
             deviation = torch.norm(pred_v - target_motion).item()
             total_deviation += deviation
             
+            # 2b. Calculate Optimal Path Length (Expert Distance)
+            optimal_path_length += torch.norm(target_motion).item()
+            
             # 3. Safety Monitoring (Swerves instead of Stops)
             if result.get('repulsive_active', False):
                 collision_count += 1
@@ -110,21 +114,20 @@ def evaluate_system(data_dir, weights_path=None):
                 break
                 
     # Final Report (SOTA Metrics)
-    avg_deviation = total_deviation / total_steps
-    success_rate = (success_count / total_steps) * 100
+    total_steps_taken = total_steps if 'total_steps' in locals() else len(dataset)
+    avg_deviation = total_deviation / total_steps_taken
+    success_rate = (success_count / total_attempts) * 100 
     
-    # Efficiency-Success Score (ESS) - Simplied: SR * (Optimal_PL / Actual_PL)
-    # We'll assume the target_motion sum is the "Optimal" PL
-    optimal_pl = 1.0 # placeholder or calculated from target_motion
-    ess = (success_rate / 100.0) * (optimal_pl / max(path_length, 0.1))
+    # Efficiency-Success Score (ESS) - SR * (Optimal_PL / max(Actual_PL, Optimal_PL))
+    ess = (success_rate / 100.0) * (optimal_path_length / max(path_length, optimal_path_length))
 
-    print("\n--- SOTA NAVIGATION BENCHMARK RESULTS ---")
+    print("\n--- NAVIGATION BENCHMARK RESULTS ---")
     print(f" -> Success Rate (SR): {success_rate:.2f}%")
     print(f" -> Total Path Length (PL): {path_length:.4f} meters")
-    print(f" -> Avg Completion Steps (ACT): {total_steps}")
+    print(f" -> Avg Completion Steps (ACT): {total_steps_taken}")
     print(f" -> Efficiency-Success Score (ESS): {ess:.4f}")
     print(f" -> Deviation Rate: {avg_deviation:.4f} m/s")
-    print(f" -> Safety Interventions: {collision_count} stops")
+    print(f" -> Safety Interventions: {collision_count} swerves")
     print(f"------------------------------------------")
     print(f"Status: {'PASS' if success_rate > 50 else 'FAIL (Requires more training)'}")
 

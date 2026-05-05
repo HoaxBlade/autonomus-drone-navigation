@@ -1,0 +1,15 @@
+--- SOTA NAVIGATION EXPERIMENT LOG ---
+Timestamp: 2026-05-05 12:09:17
+Environment: TartanAir / abandonedfactory
+Sequence: P001 (Easy)
+Architecture: v2.2 (Recurrent + Learned Termination + VFH)
+
+BENCHMARK RESULTS:
+ -> Success Rate (SR): 100.00%
+ -> Total Path Length (PL): 12.6023 meters
+ -> Avg Completion Steps (ACT): 90
+ -> Efficiency-Success Score (ESS): 1.0000
+ -> Deviation Rate: 0.0351 m/s
+ -> Safety Interventions: 0 swerves
+------------------------------------------
+Final Status: PASS
