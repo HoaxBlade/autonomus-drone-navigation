@@ -18,7 +18,7 @@ class IntegratedPlanner:
         self.prev_velocity = torch.zeros(3)
         
         # Thresholds
-        self.goal_threshold = 0.92
+        self.goal_threshold = 0.85
         self.base_safety_margin = 0.1 # Minimum normalized depth at idle
         self.k_velocity = 0.5         # Scaling factor: stop earlier at higher speeds
         
@@ -65,7 +65,7 @@ class IntegratedPlanner:
             
             h, w = depth_map.shape[-2:]
             central_depth = depth_map[:, :, h//4:3*h//4, w//4:3*w//4]
-            min_dist = torch.min(central_depth).item()
+            min_dist = torch.mean(central_depth).item()
             
             if min_dist < dynamic_margin:
                 self.prev_velocity = torch.zeros(3) # Reset inertia on emergency stop

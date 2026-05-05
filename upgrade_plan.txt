@@ -1,0 +1,26 @@
+DRONE NAVIGATION UPGRADE PLAN (FACTUAL)
+
+PHASE 1: ROBUST PERCEPTION (SIM-TO-REAL)
+- Target: data_loaders.py
+- Task: Add Photometric Augmentation.
+- Details: ColorJitter (brightness=0.2, contrast=0.2, saturation=0.1) and GaussianNoise.
+- Purpose: Force the model to learn geometric shapes instead of simulation colors.
+
+PHASE 2: TEMPORAL REASONING (MEMORY)
+- Target: encoders.py & trainer.py
+- Task: Implement Gated Recurrent Unit (GRU).
+- Details: Add a 256-dim hidden state to the perception backbone.
+- Purpose: Prevent the "blind spot" issue where the drone forgets obstacles once they leave the immediate frame.
+
+PHASE 3: DECISION INTELLIGENCE (STRATEGIST)
+- Target: planner.py
+- Task: Learned Landing & Vector Field Histograms (VFH).
+- Details: 
+    1. Replace hardcoded similarity thresholds with a learned landing classifier.
+    2. Replace "Emergency Stop" with "Repulsive Vectors" derived from the depth map.
+- Purpose: Increase Success Rate (SR) and allow for swerving around obstacles.
+
+METRICS FOR EVALUATION:
+- Success Rate (SR): Goal > 50%
+- Efficiency-Success Score (ESS): Goal > 0.4
+- Deviation Rate: Target < 0.1 m/s
