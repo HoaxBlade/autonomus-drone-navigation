@@ -80,7 +80,13 @@ class TartanAirDataset(Dataset):
         if self.transform:
             goal_image = self.transform(goal_image)
             
-        return images, torch.FloatTensor(delta_pos), depth, goal_image
+        # 5. Success Label (Binary Classifier Ground Truth)
+        # If distance to goal is < 1.0 meter, label as success (1.0)
+        goal_pose = self.poses[goal_idx]
+        dist_to_goal = np.linalg.norm(next_pose[:3] - goal_pose[:3])
+        success_label = 1.0 if dist_to_goal < 1.0 else 0.0
+            
+        return images, torch.FloatTensor(delta_pos), depth, goal_image, torch.FloatTensor([success_label])
 
 class TUMDataset(Dataset):
     """

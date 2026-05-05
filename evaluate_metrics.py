@@ -70,7 +70,7 @@ def evaluate_system(data_dir, weights_path=None):
     
     with torch.no_grad():
         for i in range(total_steps):
-            images_seq, target_motion, target_depth, goal_image = dataset[i]
+            images_seq, target_motion, target_depth, goal_image, _ = dataset[i]
             
             # Prepare inputs
             images_seq = images_seq.unsqueeze(0).to(device)

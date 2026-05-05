@@ -59,6 +59,7 @@ class NavigationTrainer:
         
         self.nav_criterion = nn.MSELoss()
         self.depth_criterion = nn.MSELoss()
+        self.goal_criterion = nn.BCELoss() # Binary Cross-Entropy for Landing Classifier
         
         # Load existing weights if provided
         if weights_path and os.path.exists(weights_path):
@@ -120,9 +121,10 @@ class NavigationTrainer:
         self.path_follower.train()
         # Main training loop
         total_loss = 0
-        for i, (images_seq, target_motion, target_depth, goal_image) in enumerate(self.dataloader):
+        for i, (images_seq, target_motion, target_depth, goal_image, success_label) in enumerate(self.dataloader):
             images_seq, target_motion = images_seq.to(self.device), target_motion.to(self.device)
             target_depth, goal_image = target_depth.to(self.device), goal_image.to(self.device)
+            success_label = success_label.to(self.device)
             
             self.optimizer.zero_grad()
             
@@ -149,20 +151,18 @@ class NavigationTrainer:
             predicted_action = self.path_follower(last_memory_state, memory_seq)
             nav_loss = self.nav_criterion(predicted_action, target_motion)
             
-            # 3. Goal Similarity (Siamese Matching)
-            obs_features = self.backbone(last_frame)
-            goal_features = self.backbone(goal_image)
+            # 3. Goal Termination (Differentiable Classifier)
+            # Use goal_encoder to pool backbone features to 512-dim vectors
+            obs_v = self.goal_encoder(last_frame)
+            goal_v = self.goal_encoder(goal_image)
             
-            # We want current features to be "similar" to goal features
-            # In a real Siamese network, we would use Triplet Loss or Contrastive Loss.
-            # For this Phase, we'll use MSE loss between the feature vectors.
-            goal_loss = self.nav_criterion(obs_features, goal_features)
+            predicted_success = self.goal_matcher(obs_v, goal_v)
+            goal_loss = self.goal_criterion(predicted_success, success_label)
             
-            # 4. Multi-task Loss Balancing
-            w_nav, w_depth, w_goal = 1.0, 1.0, 0.5 # Add weight to Goal loss
+            # 4. Multi-task Loss Balancing (SOTA weights)
+            w_nav, w_depth, w_goal = 10.0, 1.0, 5.0 
             
             loss = (w_nav * nav_loss) + (w_depth * depth_loss) + (w_goal * goal_loss)
-            
             loss.backward()
             self.optimizer.step()
             

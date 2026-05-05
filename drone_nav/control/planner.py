@@ -40,63 +40,71 @@ class IntegratedPlanner:
 
     def plan(self, current_obs, path_seq, goal_img, depth_map=None, vpr_obs=None):
         """
-        Determines the final movement command with dynamic safety and smoothing.
-        Args:
-            current_obs: (N, D_pooled) - Siamese/Pooled embedding for goal matching
-            path_seq: (N, T, D_vpr) - Sequence of NetVLAD embeddings for path
-            goal_img: (1, D_pooled) - Targeted goal image embedding
-            depth_map: (N, 1, H, w) - Estimated depth
-            vpr_obs: (N, D_vpr) - NetVLAD embedding for path following (if different from obs)
+        Determines the final movement command using learned termination and local potential fields (VFH).
         """
         # 0. Set observations for different heads
         goal_matching_obs = current_obs
         path_following_obs = vpr_obs if vpr_obs is not None else current_obs
 
-        # 1. Check Goal similarity
-        goal_similarity = self.goal_matcher(goal_matching_obs, goal_img)
-        if goal_similarity > self.goal_threshold:
+        # 1. Learned Mission Termination (Differentiable Classifier)
+        goal_confidence = self.goal_matcher(goal_matching_obs, goal_img).item()
+        
+        if goal_confidence > self.goal_threshold:
             v_stop = torch.zeros(3)
             self.prev_velocity = v_stop
-            return {"action": "LAND", "velocity": v_stop.tolist(), "confidence": goal_similarity.item()}
+            return {"action": "LAND", "velocity": v_stop.tolist(), "confidence": goal_confidence}
 
-        # 2. Dynamic Geometric Safety Check
+        # 2. Local Potential Fields (VFH - Repulsive Vectors)
+        repulsive_v = torch.zeros(3)
         if depth_map is not None:
-            # Calculate dynamic safety margin: dist = margin + k * current_v
-            current_v_mag = torch.norm(self.prev_velocity).item()
-            dynamic_margin = self.base_safety_margin + (self.k_velocity * current_v_mag)
-            
+            # We divide the depth map into sectors (Left, Center, Right)
             h, w = depth_map.shape[-2:]
-            central_depth = depth_map[:, :, h//4:3*h//4, w//4:3*w//4]
-            min_dist = torch.mean(central_depth).item()
             
-            if min_dist < dynamic_margin:
-                self.prev_velocity = torch.zeros(3) # Reset inertia on emergency stop
-                return {
-                    "action": "EMERGENCY_STOP", 
-                    "velocity": [0, 0, 0], 
-                    "reason": f"Obstacle at {min_dist:.2f} (Required: {dynamic_margin:.2f})"
-                }
+            # Divide into 3 vertical sectors
+            left_sector = depth_map[:, :, :, :w//3]
+            center_sector = depth_map[:, :, :, w//3:2*w//3]
+            right_sector = depth_map[:, :, :, 2*w//3:]
+            
+            l_mean = torch.mean(left_sector).item()
+            c_mean = torch.mean(center_sector).item()
+            r_mean = torch.mean(right_sector).item()
+            
+            # Repulsive logic: if a sector is "tight" (< 0.25), generate force in opposite direction
+            safety_limit = 0.25
+            force_magnitude = 0.4
+            
+            if l_mean < safety_limit:
+                repulsive_v[1] -= force_magnitude # Push Right
+            if r_mean < safety_limit:
+                repulsive_v[1] += force_magnitude # Push Left
+            if c_mean < safety_limit:
+                repulsive_v[0] -= force_magnitude # Push Back
+                if l_mean > r_mean:
+                    repulsive_v[1] += force_magnitude 
+                else:
+                    repulsive_v[1] -= force_magnitude
 
-        # 3. Decision Fusion
+        # 3. Decision Fusion (Attractive Path + Repulsive Obstacles)
         if self.memory is not None:
-            # Memory expects (Batch, Seq, Dim)
             mem_in = path_seq
             memory_out, self.h = self.memory(mem_in, self.h)
             path_velocity = self.path_follower(memory_out[:, -1, :], memory_out).squeeze(0)
         else:
             path_velocity = self.path_follower(path_following_obs, path_seq).squeeze(0)
+
+        # Final control vector
+        combined_v = path_velocity + repulsive_v
         
-        # Weighted blend
-        if goal_similarity > 0.6:
-            raw_target_v = self.alpha * path_velocity
-        else:
-            raw_target_v = path_velocity
-            
+        # Scale down if approaching goal
+        if goal_confidence > 0.6:
+            combined_v *= (1.0 - (goal_confidence - 0.6) * 2) 
+
         # 4. Temporal Smoothing (EMA Filter)
-        final_velocity = self._apply_smoothing(raw_target_v)
+        final_velocity = self._apply_smoothing(combined_v)
         
         return {
             "action": "MOVE", 
             "velocity": final_velocity.tolist(), 
-            "goal_similarity": goal_similarity.item()
+            "goal_confidence": goal_confidence,
+            "repulsive_active": torch.norm(repulsive_v).item() > 0
         }

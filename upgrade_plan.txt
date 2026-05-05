@@ -1,26 +1,25 @@
-DRONE NAVIGATION UPGRADE PLAN (FACTUAL)
+AUTONOMOUS NAVIGATION ARCHITECTURAL UPGRADE SPECIFICATION
 
-PHASE 1: ROBUST PERCEPTION (SIM-TO-REAL)
-- Target: data_loaders.py
-- Task: Add Photometric Augmentation.
-- Details: ColorJitter (brightness=0.2, contrast=0.2, saturation=0.1) and GaussianNoise.
-- Purpose: Force the model to learn geometric shapes instead of simulation colors.
+PHASE 1: PHOTOMETRIC AUGMENTATION & STOCHASTIC DOMAIN RANDOMIZATION
+- Target: train/data_loaders.py
+- Implementation: Torchvision ColorJitter and Gaussian Stochastic Noise Injection.
+- Rationale: Mitigation of the Sim-to-Real gap by decorrelating control policy from environment-specific RGB manifolds. Forces ResNet-18 backbone to converge on geometric invariants.
 
-PHASE 2: TEMPORAL REASONING (MEMORY)
-- Target: encoders.py & trainer.py
-- Task: Implement Gated Recurrent Unit (GRU).
-- Details: Add a 256-dim hidden state to the perception backbone.
-- Purpose: Prevent the "blind spot" issue where the drone forgets obstacles once they leave the immediate frame.
+PHASE 2: RECURRENT TEMPORAL INTEGRATION (NON-MARKOVIAN STATE PERSISTENCE)
+- Target: drone_nav/perception/encoders.py & train/trainer.py
+- Implementation: Gated Recurrent Unit (GRU) with 256-dimensional Hidden State (h_t).
+- Rationale: Resolution of Temporal Occlusion during high-yaw maneuvers. Facilitates information persistence across the 10-frame sliding window, preventing control instability when landmarks are momentarily obscured.
 
-PHASE 3: DECISION INTELLIGENCE (STRATEGIST)
-- Target: planner.py
-- Task: Learned Landing & Vector Field Histograms (VFH).
-- Details: 
-    1. Replace hardcoded similarity thresholds with a learned landing classifier.
-    2. Replace "Emergency Stop" with "Repulsive Vectors" derived from the depth map.
-- Purpose: Increase Success Rate (SR) and allow for swerving around obstacles.
+PHASE 3: DIFFERENTIABLE GOAL TERMINATION & LOCAL POTENTIAL FIELDS (VFH)
+- Target: drone_nav/control/planner.py
+- Implementation: 
+    1. Binary Classifier Head (Logits) for Learned Mission Termination.
+    2. Vector Field Histogram (VFH) derived from Monocular Depth Inversion.
+- Rationale:
+    - Replaces heuristic similarity thresholds with a learned probability distribution for Landing.
+    - Transitions from Binary Collision Triggers to Repulsive Gradient Vectors, optimizing Local Trajectory Perturbation and Average Completion Time (ACT).
 
-METRICS FOR EVALUATION:
-- Success Rate (SR): Goal > 50%
-- Efficiency-Success Score (ESS): Goal > 0.4
-- Deviation Rate: Target < 0.1 m/s
+CRITICAL PERFORMANCE METRICS:
+- Mission Success Probability (SR): Target > 0.50
+- Efficiency-Success Score (ESS): Target > 0.40
+- Path Deviation (MSE): Target < 0.1 m/s
