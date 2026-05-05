@@ -14,7 +14,7 @@ from drone_nav.nav.goal_matcher import GoalMatcher
 from train.data_loaders import TartanAirDataset
 
 class NavigationTrainer:
-    def __init__(self, datasets_config, lr=1e-4, batch_size=2, seq_length=10, freeze_backbone=True):
+    def __init__(self, datasets_config, lr=1e-4, batch_size=2, seq_length=10, freeze_backbone=True, weights_path=None):
         """
         datasets_config: List of dicts, e.g., 
         [{'type': 'tartanair', 'path': '...'}, {'type': 'tum', 'path': '...'}]
@@ -57,6 +57,17 @@ class NavigationTrainer:
         
         self.nav_criterion = nn.MSELoss()
         self.depth_criterion = nn.MSELoss()
+        
+        # Load existing weights if provided
+        if weights_path and os.path.exists(weights_path):
+            print(f"Loading weights from {weights_path}")
+            checkpoint = torch.load(weights_path, map_location=self.device)
+            self.backbone.load_state_dict(checkpoint.get('backbone', {}))
+            self.visual_encoder.load_state_dict(checkpoint.get('visual_encoder', {}))
+            self.goal_encoder.load_state_dict(checkpoint.get('goal_encoder', {}))
+            self.depth_encoder.load_state_dict(checkpoint.get('depth_encoder', {}))
+            self.path_follower.load_state_dict(checkpoint.get('path_follower', {}))
+            self.goal_matcher.load_state_dict(checkpoint.get('goal_matcher', {}))
 
         # 4. Multi-Dataset Loading
         from train.data_loaders import TartanAirDataset, TUMDataset, EuRoCDataset, CombinedNavigationDataset, GaussianNoise
@@ -167,21 +178,26 @@ class NavigationTrainer:
         }
 
 if __name__ == "__main__":
+    os.makedirs("checkpoints", exist_ok=True)
     config = [{'type': 'tartanair', 'path': 'data/tartanair/abandonedfactory/Easy/P001'}]
-    trainer = NavigationTrainer(datasets_config=config)
+    
+    # Auto-recovery: Start from the latest master checkpoint if it exists
+    checkpoint_path = "checkpoints/nav_stack_v2_2.pth"
+    trainer = NavigationTrainer(
+        datasets_config=config, 
+        weights_path=checkpoint_path if os.path.exists(checkpoint_path) else None
+    )
+    
     for epoch in range(1, 11):
         avg_loss = trainer.train_epoch(epoch)
         print(f"Epoch {epoch} Average Multi-Task Loss: {avg_loss:.4f}")
+        
+        # Intermediate Checkpoint (Versioning)
+        epoch_save_path = f"checkpoints/nav_stack_epoch_{epoch}.pth"
+        torch.save(trainer.get_checkpoint(), epoch_save_path)
+        print(f"Checkpoint saved: {epoch_save_path}")
     
-    # Save final model state
-    os.makedirs("checkpoints", exist_ok=True)
+    # Save final model state (Master Checkpoint)
     save_path = "checkpoints/nav_stack_v2_2.pth"
-    torch.save({
-        'backbone': trainer.backbone.state_dict(),
-        'visual_encoder': trainer.visual_encoder.state_dict(),
-        'goal_encoder': trainer.goal_encoder.state_dict(),
-        'depth_encoder': trainer.depth_encoder.state_dict(),
-        'path_follower': trainer.path_follower.state_dict(),
-        'goal_matcher': trainer.goal_matcher.state_dict(),
-    }, save_path)
-    print(f"Final model saved to: {save_path}")
+    torch.save(trainer.get_checkpoint(), save_path)
+    print(f"Final master model saved to: {save_path}")
