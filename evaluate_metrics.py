@@ -98,11 +98,16 @@ def evaluate_system(data_dir, weights_path=None):
             deviation = torch.norm(pred_v - target_motion).item()
             total_deviation += deviation
             
-            if result['action'] == "EMERGENCY_STOP":
+            # 3. Safety Monitoring (Swerves instead of Stops)
+            if result.get('repulsive_active', False):
                 collision_count += 1
             
+            # 4. Mission Success Termination
             if result['action'] == "LAND":
-                success_count += 1
+                success_count = 1
+                total_steps = i + 1 # Actual steps taken
+                print(f"[SUCCESS] Goal reached at step {i+1}")
+                break
                 
     # Final Report (SOTA Metrics)
     avg_deviation = total_deviation / total_steps

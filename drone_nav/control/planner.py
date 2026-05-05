@@ -55,7 +55,7 @@ class IntegratedPlanner:
             return {"action": "LAND", "velocity": v_stop.tolist(), "confidence": goal_confidence}
 
         # 2. Local Potential Fields (VFH - Repulsive Vectors)
-        repulsive_v = torch.zeros(3)
+        repulsive_v = torch.zeros(3).to(current_obs.device)
         if depth_map is not None:
             # We divide the depth map into sectors (Left, Center, Right)
             h, w = depth_map.shape[-2:]
