@@ -30,12 +30,35 @@ class DroneController:
                 self.is_connected = True
                 break
 
-    async def get_state(self):
+    async def get_state(self) -> dict:
         """
-        Return the current state of the drone (position, attitude, battery, etc.).
+        Returns live FC telemetry: position, velocity, heading.
+        Each field is read from a single-shot async generator.
         """
-        # Placeholder for telemetry data
-        return {"position": (0, 0, 0)}
+        state: dict = {}
+        async for pos in self.drone.telemetry.position():
+            state['lat']      = pos.latitude_deg
+            state['lon']      = pos.longitude_deg
+            state['altitude'] = pos.absolute_altitude_m
+            break
+        async for vel in self.drone.telemetry.velocity_ned():
+            state['vx'] = vel.north_m_s
+            state['vy'] = vel.east_m_s
+            state['vz'] = vel.down_m_s
+            break
+        return state
+
+    async def get_battery(self) -> float:
+        """
+        C2 — Returns the current battery charge as a percentage (0.0 – 100.0).
+        Reads a single value from the MAVSDK battery telemetry stream.
+        Returns -1.0 if telemetry is unavailable (not connected).
+        """
+        try:
+            async for battery in self.drone.telemetry.battery():
+                return battery.remaining_percent * 100.0
+        except Exception:
+            return -1.0
 
     async def get_camera_frame(self):
         """

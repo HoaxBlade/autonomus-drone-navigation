@@ -51,6 +51,10 @@ TAKEOFF_ALTITUDE    = 1.5         # metres
 HEARTBEAT_HZ        = 5           # C1: re-send last velocity at 5 Hz
 WATCHDOG_LIMIT_S    = 1.5         # C1: emergency hover if no update for this long
 OVERRUN_STREAK_MAX  = 5           # C1: consecutive overruns before dropping Hz
+# C2: Battery thresholds (percentage)
+BATT_WARN_PCT       = 30.0        # C2: log warning, keep flying
+BATT_CRITICAL_PCT   = 20.0        # C2: finish current step then initiate landing
+BATT_EMERGENCY_PCT  = 10.0        # C2: immediate emergency hover + land, no wait
 
 
 # ── C1: Shared mutable state between flight_loop and heartbeat_task ───────────
@@ -62,9 +66,12 @@ class FlightState:
     def __init__(self):
         self.last_velocity        = {"vx": 0.0, "vy": 0.0}  # last sent command
         self.last_update_ts       = time.monotonic()          # set each loop step
-        self.stop                 = False                     # tells heartbeat to exit
+        self.stop                 = False                     # tells all tasks to exit
         self.consecutive_overruns = 0                         # overrun streak counter
         self.control_hz           = CONTROL_HZ                # mutable — reduced on overrun
+        # C2: battery
+        self.battery_pct          = 100.0    # last known battery %
+        self.low_battery          = False    # set True to signal flight_loop to land
 
 _state = FlightState()
 
@@ -105,6 +112,68 @@ async def heartbeat_task(controller: "DroneController", args) -> None:
 
         # ── Heartbeat: resend last velocity to keep offboard alive ────────
         await controller.move_to(_state.last_velocity)
+
+
+async def battery_monitor_task(controller: "DroneController", args) -> None:
+    """
+    C2 — Battery Level Monitor
+    ──────────────────────────
+    Polls the FC battery telemetry at 0.5 Hz (every 2s) and implements
+    a three-stage response:
+
+      Stage 1 — WARNING  (< 30%): Log and continue.
+      Stage 2 — CRITICAL (< 20%): Set _state.low_battery = True so
+                                   flight_loop lands at the end of the
+                                   current step (controlled descent).
+      Stage 3 — EMERGENCY(< 10%): Immediately command emergency_hover()
+                                   then land() without waiting for the
+                                   inference loop — highest priority.
+    """
+    POLL_HZ = 0.5  # check every 2 seconds
+
+    while not _state.stop:
+        await asyncio.sleep(1.0 / POLL_HZ)
+
+        if args.dry_run:
+            continue
+
+        batt = await controller.get_battery()
+        if batt < 0:
+            print("[BATT] Telemetry unavailable — skipping check.")
+            continue
+
+        _state.battery_pct = batt
+
+        if batt < BATT_EMERGENCY_PCT:
+            # Stage 3: drop everything, land NOW
+            print(
+                f"[BATT] ⚠️ EMERGENCY: {batt:.1f}% (< {BATT_EMERGENCY_PCT}%). "
+                "Immediate emergency hover + land!"
+            )
+            await controller.emergency_hover()
+            await asyncio.sleep(0.5)
+            await controller.land()
+            _state.stop = True  # signal all tasks to exit
+            return
+
+        elif batt < BATT_CRITICAL_PCT:
+            # Stage 2: flag flight_loop to land after current step
+            if not _state.low_battery:
+                print(
+                    f"[BATT] ⚠ CRITICAL: {batt:.1f}% (< {BATT_CRITICAL_PCT}%). "
+                    "Flagging controlled landing at end of current step."
+                )
+                _state.low_battery = True
+
+        elif batt < BATT_WARN_PCT:
+            # Stage 1: warn only
+            print(f"[BATT] WARNING: {batt:.1f}% remaining (< {BATT_WARN_PCT}%).")
+
+        else:
+            # Healthy — clear the flag if it was set by a transient dip
+            if _state.low_battery:
+                _state.low_battery = False
+                print(f"[BATT] Battery recovered to {batt:.1f}%. Clearing low-battery flag.")
 
 
 # ── Pre-processing (must match training pipeline) ─────────────────────────────
@@ -223,6 +292,16 @@ async def flight_loop(args, controller, planner,
         )
 
         # ── D. Actuation ───────────────────────────────────────────────────
+        # C2: Controlled landing on low battery (battery_monitor_task sets flag)
+        if _state.low_battery:
+            print(
+                f"[BATT] Low battery ({_state.battery_pct:.1f}%). "
+                "Initiating controlled landing."
+            )
+            if not args.dry_run:
+                await controller.land()
+            return 'LOW_BATTERY'
+
         if action == 'LAND':
             print("[Flight] Goal confidence exceeded threshold. Initiating landing.")
             if not args.dry_run:
@@ -261,7 +340,10 @@ async def flight_loop(args, controller, planner,
         await asyncio.sleep(sleep_s)
         step += 1
 
-    print(f"[Flight] MAX_STEPS ({MAX_STEPS}) reached. Initiating hover/land.")
+    print(
+        f"[Flight] Max steps ({MAX_STEPS}) reached | "
+        f"Battery: {_state.battery_pct:.1f}%. Initiating hover/land."
+    )
     return 'MAX_STEPS'
 
 
@@ -318,14 +400,23 @@ async def main(args):
     await controller.drone.offboard.start()
     print("[Init] Offboard mode active.\n")
 
-    # ── 6. C1: Start heartbeat task in parallel, then run control loop ──────
+    # ── 6. C1+C2: Start parallel safety tasks, then run control loop ─────────
     _state.last_update_ts = time.monotonic()  # reset watchdog clock
+
     heartbeat = asyncio.create_task(
         heartbeat_task(controller, args),
         name="heartbeat"
     )
-    print("[Init] Heartbeat task started "
-          f"(5 Hz resend | watchdog={WATCHDOG_LIMIT_S}s timeout).")
+    battery_mon = asyncio.create_task(
+        battery_monitor_task(controller, args),
+        name="battery_monitor"
+    )
+    print(
+        "[Init] Safety tasks started:\n"
+        f"       └ Heartbeat    : 5 Hz resend | watchdog={WATCHDOG_LIMIT_S}s\n"
+        f"       └ Battery mon  : every 2s | warn={BATT_WARN_PCT}% "
+        f"| crit={BATT_CRITICAL_PCT}% | emerg={BATT_EMERGENCY_PCT}%"
+    )
 
     exit_reason = 'ERROR'
     try:
@@ -338,12 +429,14 @@ async def main(args):
         print(f"\n[ERROR] Unhandled exception: {e}")
         print("[SAFETY] Commanding emergency hover.")
     finally:
-        # Stop heartbeat first so it doesn't fight the landing command
+        # Stop all background safety tasks before issuing landing commands
         _state.stop = True
-        try:
-            await asyncio.wait_for(heartbeat, timeout=1.0)
-        except asyncio.TimeoutError:
-            heartbeat.cancel()
+        for task, name in [(heartbeat, "heartbeat"), (battery_mon, "battery_monitor")]:
+            try:
+                await asyncio.wait_for(task, timeout=1.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                task.cancel()
+                print(f"[Cleanup] {name} task cancelled.")
 
         await controller.emergency_hover()
         await asyncio.sleep(1)
