@@ -40,14 +40,71 @@ from drone_nav.control.planner import IntegratedPlanner
 from drone_navigator.controller import DroneController
 
 # ── Flight constants (conservative first-flight values) ──────────────────────
-WEIGHTS_PATH      = "checkpoints/nav_stack_v2_2.pth"
-CONTROL_HZ        = 10          # perception + command rate
-MAX_VELOCITY      = 0.5         # m/s — clip planner output for safety
-GOAL_THRESHOLD    = 0.85        # confidence to trigger landing
-EMA_LAMBDA        = 0.85        # smoother than sim (real vibrations)
-MAX_STEPS         = 300         # ~30 s at 10 Hz, then auto-hover
-VPR_WINDOW        = 10          # rolling frame buffer for GRU memory
-TAKEOFF_ALTITUDE  = 1.5         # metres
+WEIGHTS_PATH        = "checkpoints/nav_stack_v2_2.pth"
+CONTROL_HZ          = 10          # perception + command rate
+MAX_VELOCITY        = 0.5         # m/s — clip planner output for safety
+GOAL_THRESHOLD      = 0.85        # confidence to trigger landing
+EMA_LAMBDA          = 0.85        # smoother than sim (real vibrations)
+MAX_STEPS           = 300         # ~30 s at 10 Hz, then auto-hover
+VPR_WINDOW          = 10          # rolling frame buffer for GRU memory
+TAKEOFF_ALTITUDE    = 1.5         # metres
+HEARTBEAT_HZ        = 5           # C1: re-send last velocity at 5 Hz
+WATCHDOG_LIMIT_S    = 1.5         # C1: emergency hover if no update for this long
+OVERRUN_STREAK_MAX  = 5           # C1: consecutive overruns before dropping Hz
+
+
+# ── C1: Shared mutable state between flight_loop and heartbeat_task ───────────
+class FlightState:
+    """
+    Holds the last known safe velocity command and timing metadata.
+    Accessed by both the inference loop and the heartbeat task.
+    """
+    def __init__(self):
+        self.last_velocity        = {"vx": 0.0, "vy": 0.0}  # last sent command
+        self.last_update_ts       = time.monotonic()          # set each loop step
+        self.stop                 = False                     # tells heartbeat to exit
+        self.consecutive_overruns = 0                         # overrun streak counter
+        self.control_hz           = CONTROL_HZ                # mutable — reduced on overrun
+
+_state = FlightState()
+
+
+async def heartbeat_task(controller: "DroneController", args) -> None:
+    """
+    C1 — Watchdog + Heartbeat
+    ─────────────────────────
+    Runs in parallel with flight_loop at HEARTBEAT_HZ (5 Hz).
+
+    Two jobs:
+      1. HEARTBEAT: Re-sends the last known safe velocity so PX4 offboard
+         mode never times out (PX4 exits offboard after ~500 ms without a
+         setpoint). At 5 Hz we send every 200 ms — well inside that window.
+
+      2. WATCHDOG: If flight_loop hasn't updated _state.last_update_ts
+         within WATCHDOG_LIMIT_S, the inference loop has stalled.
+         Immediately command an emergency hover.
+    """
+    while not _state.stop:
+        await asyncio.sleep(1.0 / HEARTBEAT_HZ)
+
+        if args.dry_run:
+            # In dry-run there is no FC — just keep the task alive
+            continue
+
+        # ── Watchdog check ────────────────────────────────────────────────
+        stale_s = time.monotonic() - _state.last_update_ts
+        if stale_s > WATCHDOG_LIMIT_S:
+            print(
+                f"[WATCHDOG] No inference update for {stale_s:.2f}s "
+                f"(limit={WATCHDOG_LIMIT_S}s). "
+                "Commanding emergency hover until loop recovers."
+            )
+            await controller.emergency_hover()
+            # Do NOT set _state.stop — allow loop to recover if it does
+            continue
+
+        # ── Heartbeat: resend last velocity to keep offboard alive ────────
+        await controller.move_to(_state.last_velocity)
 
 
 # ── Pre-processing (must match training pipeline) ─────────────────────────────
@@ -108,16 +165,18 @@ async def flight_loop(args, controller, planner,
                       visual_enc, goal_enc, depth_enc,
                       goal_embedding, device):
     """
-    Core 10 Hz perception → planning → actuation loop.
-    Returns the exit reason string: 'GOAL_REACHED' | 'MAX_STEPS' | 'ERROR'.
+    Core perception → planning → actuation loop.
+    Runs at _state.control_hz (default 10 Hz, auto-reduced on overrun).
+    Returns exit reason: 'GOAL_REACHED' | 'MAX_STEPS' | 'ERROR'.
     """
     vpr_memory = []
     step       = 0
 
     print("\n[Flight] Starting control loop. Press Ctrl+C for emergency hover.")
-    print(f"         Max steps: {MAX_STEPS} | Hz: {CONTROL_HZ} | Max speed: {MAX_VELOCITY} m/s\n")
+    print(f"         Max steps: {MAX_STEPS} | Hz: {_state.control_hz} | Max speed: {MAX_VELOCITY} m/s\n")
 
     while step < MAX_STEPS:
+        loop_budget_s = 1.0 / _state.control_hz
         t_start = time.monotonic()
 
         # ── A. Perception ──────────────────────────────────────────────────
@@ -154,11 +213,13 @@ async def flight_loop(args, controller, planner,
 
         # ── C. Logging ─────────────────────────────────────────────────────
         vx, vy, _ = velocity
+        elapsed   = time.monotonic() - t_start
         print(
             f"[Step {step:03d}] action={action} | "
             f"vx={vx:+.3f} vy={vy:+.3f} | "
             f"goal_conf={conf:.3f} | "
-            f"{'⚠ REPULSE' if repulse else 'clear'}"
+            f"{'⚠ REPULSE' if repulse else 'clear'} | "
+            f"{elapsed*1000:.0f}ms"
         )
 
         # ── D. Actuation ───────────────────────────────────────────────────
@@ -168,12 +229,35 @@ async def flight_loop(args, controller, planner,
                 await controller.land()
             return 'GOAL_REACHED'
 
+        # C1: Update shared state BEFORE sending — heartbeat picks this up
+        _state.last_velocity  = {"vx": vx, "vy": vy}
+        _state.last_update_ts = time.monotonic()
+
         if not args.dry_run:
             await controller.move_to({"vx": vx, "vy": vy})
 
-        # ── E. Rate limiting — sleep remainder of 100ms tick ───────────────
-        elapsed = time.monotonic() - t_start
-        sleep_s = max(0.0, (1.0 / CONTROL_HZ) - elapsed)
+        # ── E. C1: Overrun detection + rate limiting ────────────────────────
+        if elapsed > loop_budget_s * 1.5:
+            _state.consecutive_overruns += 1
+            print(
+                f"[OVERRUN] Step {step}: {elapsed*1000:.0f}ms "
+                f"(budget={loop_budget_s*1000:.0f}ms, "
+                f"streak={_state.consecutive_overruns}/{OVERRUN_STREAK_MAX})"
+            )
+            if _state.consecutive_overruns >= OVERRUN_STREAK_MAX:
+                new_hz = max(2, _state.control_hz // 2)
+                print(
+                    f"[OVERRUN] {OVERRUN_STREAK_MAX} consecutive overruns. "
+                    f"Reducing control rate: {_state.control_hz} Hz → {new_hz} Hz"
+                )
+                _state.control_hz = new_hz
+                _state.consecutive_overruns = 0
+        else:
+            # Clean step — reset streak
+            if _state.consecutive_overruns > 0:
+                _state.consecutive_overruns = 0
+
+        sleep_s = max(0.0, loop_budget_s - elapsed)
         await asyncio.sleep(sleep_s)
         step += 1
 
@@ -234,7 +318,15 @@ async def main(args):
     await controller.drone.offboard.start()
     print("[Init] Offboard mode active.\n")
 
-    # ── 6. Run control loop ───────────────────────────────────────────────
+    # ── 6. C1: Start heartbeat task in parallel, then run control loop ──────
+    _state.last_update_ts = time.monotonic()  # reset watchdog clock
+    heartbeat = asyncio.create_task(
+        heartbeat_task(controller, args),
+        name="heartbeat"
+    )
+    print("[Init] Heartbeat task started "
+          f"(5 Hz resend | watchdog={WATCHDOG_LIMIT_S}s timeout).")
+
     exit_reason = 'ERROR'
     try:
         exit_reason = await flight_loop(args, controller, planner,
@@ -246,16 +338,23 @@ async def main(args):
         print(f"\n[ERROR] Unhandled exception: {e}")
         print("[SAFETY] Commanding emergency hover.")
     finally:
+        # Stop heartbeat first so it doesn't fight the landing command
+        _state.stop = True
+        try:
+            await asyncio.wait_for(heartbeat, timeout=1.0)
+        except asyncio.TimeoutError:
+            heartbeat.cancel()
+
         await controller.emergency_hover()
         await asyncio.sleep(1)
 
         if exit_reason != 'GOAL_REACHED':
-            # Land after non-goal exits (timeout, error, interrupt)
             await controller.land()
 
         await controller.drone.offboard.stop()
         controller.release_camera()
-        print(f"[Done] Exit reason: {exit_reason}")
+        print(f"[Done] Exit reason: {exit_reason} | "
+              f"Final control Hz: {_state.control_hz}")
 
 
 if __name__ == "__main__":
