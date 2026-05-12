@@ -4,7 +4,9 @@ import os
 from drone_nav.sim_interface.habitat_bridge import HabitatBridge
 from drone_nav.sim_interface.dynamics import DroneDynamics
 from drone_nav.control.planner import IntegratedPlanner
-from drone_nav.perception.encoders import PerceptionBackbone, VisualEncoder, GoalEncoder, DepthEncoder
+from drone_nav.perception.encoders import (
+    PerceptionBackbone, VisualEncoder, GoalEncoder, DepthEncoder, MemoryModule
+)
 from drone_nav.nav.path_follower import PathFollower
 from drone_nav.nav.goal_matcher import GoalMatcher
 
@@ -23,21 +25,30 @@ def run_simulation(scene_path, goal_pos, weights_path="checkpoints/nav_stack_v2_
     visual_encoder = VisualEncoder(backbone).to(device)
     goal_encoder = GoalEncoder(backbone).to(device)
     depth_encoder = DepthEncoder(backbone).to(device)
-    
-    path_follower = PathFollower(input_dim=visual_encoder.output_dim).to(device)
+
+    # A3 — MemoryModule (GRU) must be created before PathFollower
+    # PathFollower takes memory.hidden_dim (256), NOT visual_encoder.output_dim (32768)
+    memory = MemoryModule(input_dim=visual_encoder.output_dim).to(device)
+    path_follower = PathFollower(input_dim=memory.hidden_dim).to(device)
     goal_matcher = GoalMatcher(input_dim=backbone.out_channels).to(device)
-    planner = IntegratedPlanner(path_follower, goal_matcher)
+    planner = IntegratedPlanner(path_follower, goal_matcher, memory=memory)
     
     # Load Trained Weights
     if os.path.exists(weights_path):
         print(f"Loading weights from: {weights_path}")
-        checkpoint = torch.load(weights_path, map_location=device)
+        checkpoint = torch.load(weights_path, map_location=device, weights_only=True)
         backbone.load_state_dict(checkpoint['backbone'])
         visual_encoder.load_state_dict(checkpoint['visual_encoder'])
         goal_encoder.load_state_dict(checkpoint['goal_encoder'])
         depth_encoder.load_state_dict(checkpoint['depth_encoder'])
         path_follower.load_state_dict(checkpoint['path_follower'])
         goal_matcher.load_state_dict(checkpoint['goal_matcher'])
+        # A3 — Load GRU weights (previously missing)
+        if 'memory' in checkpoint:
+            memory.load_state_dict(checkpoint['memory'])
+            print("[A3] MemoryModule (GRU) weights loaded successfully.")
+        else:
+            print("[WARNING] No 'memory' key in checkpoint — GRU starting from random init.")
     else:
         print(f"[WARNING] Weights not found at {weights_path}. Running with random initialization.")
 
@@ -45,6 +56,9 @@ def run_simulation(scene_path, goal_pos, weights_path="checkpoints/nav_stack_v2_
     visual_encoder.eval()
     goal_encoder.eval()
     depth_encoder.eval()
+    memory.eval()       # A3 — GRU in eval mode (disables dropout if any)
+    path_follower.eval()
+    goal_matcher.eval()
     
     # 3. Simulation Loop
     dynamics.reset(position=[0, 0, 0])
@@ -75,16 +89,18 @@ def run_simulation(scene_path, goal_pos, weights_path="checkpoints/nav_stack_v2_
                 padding = torch.zeros((1, 10 - vpr_memory_tensor.shape[1], vpr_memory_tensor.shape[2])).to(device)
                 vpr_memory_tensor = torch.cat([padding, vpr_memory_tensor], dim=1)
             
-            # 2. Goal Matcher (Siamese)
+            # 2. Goal Matcher (Siamese) — compare against encoded goal position
             obs_siamese = goal_encoder(rgb_tensor)
-            # Mock goal (In real eval, this would be the destination image features)
-            goal_siamese = obs_siamese # Placeholder
-            
-            # 3. Depth (Geometry)
-            # depth = depth_encoder(rgb_tensor)
-            
+            # NOTE: goal_siamese should be pre-encoded from a real goal image.
+            # Using obs_siamese as a placeholder here — wire in load_goal_image() for real flight.
+            goal_siamese = obs_siamese  # TODO: replace with controller.load_goal_image() result
+
+            # 3. Depth (Geometry) — enabled for VFH obstacle avoidance
+            depth = depth_encoder(rgb_tensor)
+
             # B. Planning
-            result = planner.plan(obs_siamese, vpr_memory_tensor, goal_siamese, vpr_obs=current_vpr)
+            result = planner.plan(obs_siamese, vpr_memory_tensor, goal_siamese,
+                                  depth_map=depth, vpr_obs=current_vpr)
             target_v = np.array(result['velocity'])
             
         # C. Dynamics Update
