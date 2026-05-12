@@ -1,24 +1,35 @@
-from drone_nav.perception.encoders import PerceptionBackbone, VisualEncoder, GoalEncoder, DepthEncoder
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+import torch
+from drone_nav.perception.encoders import (
+    PerceptionBackbone, VisualEncoder, GoalEncoder, DepthEncoder, MemoryModule
+)
+from drone_nav.nav.path_follower import PathFollower
+from drone_nav.nav.goal_matcher import GoalMatcher
+from drone_nav.control.planner import IntegratedPlanner
 
 def main():
     from drone_nav.utils.device import get_device
     device = get_device()
-    print(f"Initializing Drone Navigator v2.1 on {device}...")
-    
+    print(f"Initializing Drone Navigator v2.2 on {device}...")
+
     # 1. Initialize Unified Backbone
     backbone = PerceptionBackbone(architecture='resnet18').to(device)
-    
+
     # 2. Initialize Specialized Heads
-    visual_encoder = VisualEncoder(backbone, use_netvlad=True)
-    goal_encoder = GoalEncoder(backbone)
-    depth_encoder = DepthEncoder(backbone)
-    
-    # 3. Initialize Navigation Policies
-    path_follower = PathFollower(input_dim=visual_encoder.output_dim)
-    goal_matcher = GoalMatcher(input_dim=visual_encoder.output_dim)
-    
+    visual_encoder = VisualEncoder(backbone, use_netvlad=True).to(device)
+    goal_encoder   = GoalEncoder(backbone).to(device)
+    depth_encoder  = DepthEncoder(backbone).to(device)
+
+    # 3. Memory + Navigation Policies
+    memory        = MemoryModule(input_dim=visual_encoder.output_dim).to(device)
+    path_follower = PathFollower(input_dim=memory.hidden_dim).to(device)
+    goal_matcher  = GoalMatcher(input_dim=backbone.out_channels).to(device)
+
     # 4. Initialize Fusion Planner
-    planner = IntegratedPlanner(path_follower, goal_matcher)
+    planner = IntegratedPlanner(path_follower, goal_matcher, memory=memory)
     
     # 5. Mock Inputs (Testing v2.0 structure)
     batch_size = 1
@@ -48,9 +59,9 @@ def main():
         result = planner.plan(obs_siamese, path_vpr, goal_siamese, depth_map=depth_map, vpr_obs=obs_vpr)
         
         print("\nNavigation Decision:")
-        action = result.get("action")
-        velocity = result.get("velocity")[0] if isinstance(result.get("velocity"), list) else result.get("velocity")
-        
+        action   = result.get("action")
+        velocity = result.get("velocity")   # already [vx, vy, vz]
+
         if action == "MOVE":
             print(f" - Action: Following the visual path.")
             print(f" - Predicted Velocity: Forward={velocity[0]:.2f} m/s, Right={velocity[1]:.2f} m/s, Down={velocity[2]:.2f} m/s")
