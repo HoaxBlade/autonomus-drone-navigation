@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Drone — Landmark Navigation Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:       #0a0c14;
+    --panel:    #10131e;
+    --border:   #1e2440;
+    --accent:   #3b82f6;
+    --green:    #22c55e;
+    --yellow:   #eab308;
+    --red:      #ef4444;
+    --orange:   #f97316;
+    --text:     #e2e8f0;
+    --muted:    #64748b;
+    --radius:   12px;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    min-height: 100vh;
+    padding: 20px;
+    overflow-x: hidden;
+  }
+
+  /* ── Header ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 1.3rem; font-weight: 600; letter-spacing: -0.02em; }
+  header h1 span { color: var(--accent); }
+  #status-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--muted);
+    display: inline-block; margin-right: 8px;
+    transition: background 0.3s;
+    box-shadow: 0 0 0 0 transparent;
+  }
+  #status-dot.live {
+    background: var(--green);
+    animation: pulse 1.8s ease-in-out infinite;
+  }
+  #status-dot.waiting { background: var(--yellow); }
+  #status-label { font-size: 0.8rem; color: var(--muted); }
+  @keyframes pulse {
+    0%,100% { box-shadow: 0 0 0 0 rgba(34,197,94,0.4); }
+    50%      { box-shadow: 0 0 0 6px rgba(34,197,94,0);  }
+  }
+
+  /* ── Grid ── */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    transition: border-color 0.3s;
+  }
+  .panel:hover { border-color: #2d3a60; }
+  .panel-title {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+
+  /* ── Big value display ── */
+  .big-val {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 2.4rem;
+    font-weight: 500;
+    line-height: 1;
+    color: var(--text);
+    transition: color 0.3s;
+  }
+  .big-val.green  { color: var(--green);  }
+  .big-val.yellow { color: var(--yellow); }
+  .big-val.red    { color: var(--red);    }
+  .big-val.orange { color: var(--orange); }
+  .big-val.accent { color: var(--accent); }
+  .big-sub { font-size: 0.75rem; color: var(--muted); margin-top: 4px; }
+
+  /* ── Confidence bar ── */
+  .conf-bar-wrap {
+    height: 8px;
+    background: #1e2440;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-top: 10px;
+  }
+  .conf-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.4s ease, background 0.4s;
+    background: var(--accent);
+  }
+
+  /* ── Velocity compass ── */
+  .velocity-compass {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    margin-top: 8px;
+  }
+  canvas#compass { border-radius: 50%; }
+  .vel-vals { font-family: 'JetBrains Mono', monospace; font-size: 0.9rem; }
+  .vel-row { display: flex; justify-content: space-between; gap: 16px; }
+  .vel-label { color: var(--muted); font-size: 0.75rem; }
+
+  /* ── Progress bar ── */
+  .progress-wrap {
+    background: #1e2440;
+    border-radius: 6px;
+    height: 12px;
+    overflow: hidden;
+    margin-top: 10px;
+  }
+  .progress-fill {
+    height: 100%;
+    border-radius: 6px;
+    background: linear-gradient(90deg, var(--accent), var(--green));
+    transition: width 0.5s ease;
+  }
+
+  /* ── Waypoint list ── */
+  #waypoint-list { list-style: none; margin-top: 10px; }
+  #waypoint-list li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    margin-bottom: 4px;
+    transition: background 0.3s;
+  }
+  #waypoint-list li.done     { color: var(--muted); background: rgba(34,197,94,0.06); }
+  #waypoint-list li.active   { background: rgba(59,130,246,0.15); color: var(--text); font-weight: 600; }
+  #waypoint-list li.pending  { color: var(--muted); }
+  #waypoint-list li .wp-icon { font-size: 1rem; width: 20px; text-align: center; }
+  #waypoint-list li .wp-name { flex: 1; font-family: 'JetBrains Mono', monospace; }
+
+  /* ── Log ── */
+  #log-box {
+    background: #080a12;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    height: 180px;
+    overflow-y: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.73rem;
+    line-height: 1.7;
+    color: #94a3b8;
+  }
+  #log-box .log-entry { display: flex; gap: 10px; }
+  #log-box .log-ts  { color: #475569; flex-shrink: 0; }
+  #log-box .log-adv { color: var(--green); }
+  #log-box .log-warn{ color: var(--yellow); }
+
+  /* ── Action badge ── */
+  #action-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    background: rgba(59,130,246,0.2);
+    color: var(--accent);
+    border: 1px solid rgba(59,130,246,0.3);
+    transition: all 0.3s;
+    margin-top: 8px;
+  }
+  #action-badge.LAND    { background: rgba(34,197,94,0.2);  color: var(--green);  border-color: rgba(34,197,94,0.3);  }
+  #action-badge.ADVANCE { background: rgba(234,179,8,0.2);  color: var(--yellow); border-color: rgba(234,179,8,0.3);  }
+  #action-badge.WARN    { background: rgba(239,68,68,0.2);  color: var(--red);    border-color: rgba(239,68,68,0.3);  }
+
+  /* ── Repulse indicator ── */
+  #repulse-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.76rem;
+    font-weight: 600;
+    margin-top: 8px;
+    transition: all 0.3s;
+  }
+  #repulse-badge.clear  { background: rgba(34,197,94,0.1);  color: var(--green); }
+  #repulse-badge.active { background: rgba(239,68,68,0.2);  color: var(--red);   animation: repulse-blink 0.7s ease-in-out infinite; }
+  @keyframes repulse-blink {
+    0%,100% { opacity: 1; } 50% { opacity: 0.5; }
+  }
+
+  /* ── Waiting overlay ── */
+  #waiting {
+    position: fixed; inset: 0;
+    background: rgba(10,12,20,0.92);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    backdrop-filter: blur(4px);
+    transition: opacity 0.4s;
+  }
+  #waiting.hidden { opacity: 0; pointer-events: none; }
+  .spinner {
+    width: 48px; height: 48px;
+    border: 3px solid #1e2440;
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-bottom: 16px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #waiting p { color: var(--muted); font-size: 0.9rem; }
+</style>
+</head>
+<body>
+
+<div id="waiting">
+  <div class="spinner"></div>
+  <p>Waiting for <strong style="color:var(--text)">landmark_flight.py</strong> to start…</p>
+</div>
+
+<header>
+  <h1>🛸 <span>Landmark</span> Navigation — Live</h1>
+  <div style="display:flex;align-items:center;gap:8px;">
+    <span id="status-dot" class="waiting"></span>
+    <span id="status-label">connecting…</span>
+  </div>
+</header>
+
+<div class="grid">
+
+  <!-- Waypoint progress -->
+  <div class="panel" style="grid-column: span 2;">
+    <div class="panel-title">Mission Progress</div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;">
+      <div>
+        <span id="wp-idx" class="big-val accent">–</span>
+        <span style="color:var(--muted);font-size:1.2rem;font-family:'JetBrains Mono',monospace"> / </span>
+        <span id="wp-total" style="font-family:'JetBrains Mono',monospace;font-size:1.4rem;color:var(--muted)">–</span>
+      </div>
+      <span id="progress-pct" style="font-size:1.1rem;font-family:'JetBrains Mono',monospace;color:var(--green)">0%</span>
+    </div>
+    <div class="big-sub" id="active-name">–</div>
+    <div class="progress-wrap">
+      <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+    </div>
+    <ul id="waypoint-list"></ul>
+  </div>
+
+  <!-- Confidence -->
+  <div class="panel">
+    <div class="panel-title">Goal Confidence</div>
+    <div id="conf-val" class="big-val">–</div>
+    <div class="big-sub">active waypoint similarity</div>
+    <div class="conf-bar-wrap">
+      <div class="conf-bar-fill" id="conf-bar" style="width:0%"></div>
+    </div>
+    <div id="action-badge">MOVE</div>
+  </div>
+
+  <!-- Velocity -->
+  <div class="panel">
+    <div class="panel-title">Velocity Output</div>
+    <div class="velocity-compass">
+      <canvas id="compass" width="100" height="100"></canvas>
+      <div class="vel-vals">
+        <div class="vel-label">VX (forward)</div>
+        <div id="vx-val" class="big-val" style="font-size:1.5rem;">–</div>
+        <div class="vel-label" style="margin-top:8px">VY (right)</div>
+        <div id="vy-val" class="big-val" style="font-size:1.5rem;">–</div>
+      </div>
+    </div>
+    <div id="repulse-badge" class="clear">✔ Clear</div>
+  </div>
+
+  <!-- Battery -->
+  <div class="panel">
+    <div class="panel-title">Battery</div>
+    <div id="batt-val" class="big-val green">–%</div>
+    <div class="big-sub">remaining charge</div>
+    <div class="conf-bar-wrap" style="margin-top:14px">
+      <div class="conf-bar-fill" id="batt-bar" style="width:100%;background:var(--green)"></div>
+    </div>
+  </div>
+
+  <!-- Loop timing -->
+  <div class="panel">
+    <div class="panel-title">Loop Timing</div>
+    <div id="loop-ms" class="big-val">–</div>
+    <div class="big-sub">ms per step</div>
+    <div style="margin-top:12px;font-size:0.8rem;color:var(--muted)">
+      Step: <span id="step-val" style="color:var(--text);font-family:'JetBrains Mono',monospace">–</span>
+      &nbsp;|&nbsp;
+      Hz: <span id="hz-val" style="color:var(--text);font-family:'JetBrains Mono',monospace">–</span>
+    </div>
+  </div>
+
+</div>
+
+<!-- Event log -->
+<div class="panel" style="margin-bottom:0">
+  <div class="panel-title">Event Log</div>
+  <div id="log-box"></div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let prevStep = -1;
+let prevWpIdx = -1;
+const logBox = document.getElementById('log-box');
+
+function addLog(msg, cls='') {
+  const d = new Date();
+  const ts = d.toTimeString().slice(0,8);
+  const row = document.createElement('div');
+  row.className = 'log-entry';
+  row.innerHTML = `<span class="log-ts">[${ts}]</span><span class="${cls}">${msg}</span>`;
+  logBox.prepend(row);
+  while (logBox.children.length > 120) logBox.lastChild.remove();
+}
+
+// ── Compass canvas ────────────────────────────────────────────────────────
+const canvas  = document.getElementById('compass');
+const ctx     = canvas.getContext('2d');
+
+function drawCompass(vx, vy) {
+  const cx = canvas.width/2, cy = canvas.height/2, r = 44;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  // Circle
+  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
+  ctx.strokeStyle='#1e2440'; ctx.lineWidth=2; ctx.stroke();
+
+  // Grid
+  ctx.strokeStyle='#1e2440'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(cx-r,cy); ctx.lineTo(cx+r,cy); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx,cy-r); ctx.lineTo(cx,cy+r); ctx.stroke();
+
+  // Arrow
+  const mag = Math.sqrt(vx*vx+vy*vy);
+  if (mag > 0.01) {
+    const scale = r * 0.85 / 0.5;  // 0.5 = max_v
+    const ex = cx + vy * scale;     // vy = right
+    const ey = cy - vx * scale;     // vx = forward (up on canvas)
+    const angle = Math.atan2(ey-cy, ex-cx);
+    const hs = 8;
+
+    ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(ex,ey);
+    ctx.strokeStyle='#3b82f6'; ctx.lineWidth=2.5; ctx.stroke();
+
+    // Arrow head
+    ctx.beginPath();
+    ctx.moveTo(ex, ey);
+    ctx.lineTo(ex - hs*Math.cos(angle-0.4), ey - hs*Math.sin(angle-0.4));
+    ctx.lineTo(ex - hs*Math.cos(angle+0.4), ey - hs*Math.sin(angle+0.4));
+    ctx.closePath();
+    ctx.fillStyle='#3b82f6'; ctx.fill();
+  }
+
+  // Center dot
+  ctx.beginPath(); ctx.arc(cx,cy,4,0,Math.PI*2);
+  ctx.fillStyle='#64748b'; ctx.fill();
+}
+
+// ── Waypoint list renderer ────────────────────────────────────────────────
+let renderedWpNames = [];
+
+function renderWaypoints(names, activeIdx) {
+  if (!names || names.length === 0) return;
+  if (JSON.stringify(names) === JSON.stringify(renderedWpNames) && activeIdx === prevWpIdx) return;
+  renderedWpNames = names;
+
+  const ul = document.getElementById('waypoint-list');
+  ul.innerHTML = '';
+  names.forEach((name, i) => {
+    const li = document.createElement('li');
+    let icon, cls;
+    if (i < activeIdx)      { icon='✅'; cls='done';    }
+    else if (i===activeIdx) { icon='▶'; cls='active';  }
+    else if (i===names.length-1){ icon='🏁'; cls='pending'; }
+    else                    { icon='○'; cls='pending';  }
+    li.className = cls;
+    li.innerHTML = `<span class="wp-icon">${icon}</span><span class="wp-name">${name}</span>`;
+    ul.appendChild(li);
+  });
+}
+
+// ── Color helpers ─────────────────────────────────────────────────────────
+function confColor(c) {
+  if (c > 0.78) return 'green';
+  if (c > 0.5)  return 'yellow';
+  return '';
+}
+function battColor(b) {
+  if (b > 30) return 'green';
+  if (b > 20) return 'yellow';
+  return 'red';
+}
+function velColor(v) {
+  const a = Math.abs(v);
+  if (a > 0.35) return 'orange';
+  if (a > 0.15) return 'accent';
+  return '';
+}
+
+// ── Main poll loop ────────────────────────────────────────────────────────
+async function poll() {
+  try {
+    const res = await fetch('/telemetry');
+    const d   = await res.json();
+
+    if (d.status === 'waiting') {
+      document.getElementById('status-dot').className = 'waiting';
+      document.getElementById('status-label').textContent = 'waiting for flight…';
+      return;
+    }
+
+    // Hide waiting overlay
+    document.getElementById('waiting').classList.add('hidden');
+    document.getElementById('status-dot').className = 'live';
+    document.getElementById('status-label').textContent =
+      `live · step ${d.step ?? '–'}`;
+
+    // Progress
+    const wpIdx   = d.waypoint_idx ?? 0;
+    const wpTotal = d.total_waypoints ?? 1;
+    const pct     = d.progress_pct ?? 0;
+    document.getElementById('wp-idx').textContent    = wpIdx;
+    document.getElementById('wp-total').textContent  = wpTotal - 1;
+    document.getElementById('active-name').textContent = d.waypoint_name ?? '–';
+    document.getElementById('progress-pct').textContent = pct.toFixed(0) + '%';
+    document.getElementById('progress-fill').style.width = pct + '%';
+    renderWaypoints(d.waypoint_names, wpIdx);
+
+    // Confidence
+    const conf = d.goal_confidence ?? 0;
+    const confEl = document.getElementById('conf-val');
+    confEl.textContent = conf.toFixed(3);
+    confEl.className = 'big-val ' + confColor(conf);
+    document.getElementById('conf-bar').style.width = (conf*100) + '%';
+    document.getElementById('conf-bar').style.background =
+      conf > 0.78 ? 'var(--green)' : conf > 0.5 ? 'var(--yellow)' : 'var(--accent)';
+
+    // Action badge
+    const badge = document.getElementById('action-badge');
+    badge.textContent = d.action ?? 'MOVE';
+    badge.className = d.action === 'LAND' ? 'LAND' : d.action === 'ADVANCE' ? 'ADVANCE' : '';
+
+    // Velocity
+    const vx = d.vx ?? 0, vy = d.vy ?? 0;
+    const vxEl = document.getElementById('vx-val');
+    const vyEl = document.getElementById('vy-val');
+    vxEl.textContent = (vx >= 0 ? '+' : '') + vx.toFixed(3);
+    vyEl.textContent = (vy >= 0 ? '+' : '') + vy.toFixed(3);
+    vxEl.className = 'big-val ' + velColor(vx);
+    vyEl.className = 'big-val ' + velColor(vy);
+    drawCompass(vx, vy);
+
+    // Repulse
+    const rpBadge = document.getElementById('repulse-badge');
+    if (d.repulse) {
+      rpBadge.textContent = '⚠ OBSTACLE DETECTED';
+      rpBadge.className = 'active';
+    } else {
+      rpBadge.textContent = '✔ Clear';
+      rpBadge.className = 'clear';
+    }
+
+    // Battery
+    const batt = d.battery_pct ?? 100;
+    const battEl = document.getElementById('batt-val');
+    battEl.textContent = batt.toFixed(0) + '%';
+    battEl.className = 'big-val ' + battColor(batt);
+    document.getElementById('batt-bar').style.width  = batt + '%';
+    document.getElementById('batt-bar').style.background =
+      batt > 30 ? 'var(--green)' : batt > 20 ? 'var(--yellow)' : 'var(--red)';
+
+    // Timing
+    document.getElementById('loop-ms').textContent = (d.loop_ms ?? 0).toFixed(0);
+    document.getElementById('step-val').textContent = d.step ?? '–';
+    document.getElementById('hz-val').textContent   = d.control_hz ?? '–';
+
+    // Log events
+    if (d.step !== prevStep) {
+      if (d.action === 'ADVANCE') {
+        addLog(`Waypoint [${wpIdx-1}] ✅ reached → targeting [${wpIdx}] ${d.waypoint_name}`, 'log-adv');
+      } else if (d.action === 'LAND') {
+        addLog(`🏁 Final landmark reached — LANDING`, 'log-adv');
+      } else if (d.repulse) {
+        addLog(`⚠ Obstacle repulsion active — step ${d.step}`, 'log-warn');
+      }
+      prevStep = d.step;
+    }
+    if (wpIdx !== prevWpIdx) {
+      prevWpIdx = wpIdx;
+    }
+
+  } catch(e) {
+    document.getElementById('status-dot').className = '';
+    document.getElementById('status-label').textContent = 'connection error';
+  }
+}
+
+// Kick off
+drawCompass(0, 0);
+addLog('Dashboard started — awaiting telemetry…');
+setInterval(poll, 500);
+poll();
+</script>
+</body>
+</html>
